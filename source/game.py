@@ -9,7 +9,6 @@ from piece import *
 class Game:
     def __init__(self):
         self.hovered_sqr = None
-        self.move_number = 0
         self.board = Board()
         self.dragger = Dragger()
         self.config = Config()
@@ -20,6 +19,10 @@ class Game:
         # show background
         for row in range(ROWS):
             for col in range(COLS):
+                if giving_check:
+                    if  isinstance(self.board.squares[row][col].piece, King) and self.board.squares[row][col].piece.color == turn:
+                        rect = (col * SQSIZE, row * SQSIZE, SQSIZE, SQSIZE)
+                        pygame.draw.rect(surface, '#C86464', rect)
                 color = theme.bg.light if (row + col) % 2 == 0 else theme.bg.dark
                 rect = (col * SQSIZE, row*SQSIZE, SQSIZE, SQSIZE)
                 pygame.draw.rect(surface,color,rect)
@@ -49,7 +52,7 @@ class Game:
                 pygame.draw.rect(surface, color, rect)
 
         # when giving check king is marked
-        if giving_check and self.move_number > 0:
+        if giving_check:
             for row in range(ROWS):
                 for col in range(COLS):
                     if  isinstance(self.board.squares[row][col].piece, King) and self.board.squares[row][col].piece.color == turn:
@@ -94,3 +97,4 @@ class Game:
 
     def reset(self):
         self.__init__()
+        return True, 'white', [], 0

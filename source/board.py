@@ -12,7 +12,7 @@ class Board:
         self.last_move = None
         self._initiate()
 
-    def move(self, piece, move):
+    def move(self, piece, move, promotion = "queen"):
         initial = move.initial
         final = move.final
         en_passant_empty = self.squares[final.row][final.col].isempty()
@@ -33,7 +33,7 @@ class Board:
             
             # pawn promotion
             else:
-                self.check_promotion(piece, final)
+                self.check_promotion(piece, final, promotion)
 
         if isinstance(piece, King):
             rowK = 0 if piece.color == "black" else 7
@@ -52,19 +52,20 @@ class Board:
         # set last move
         self.last_move = move
 
+        self.set_true_en_passant(piece)  
+
     def valid_move(self, piece, move):
         return move in piece.moves
 
-    def find_moves(self, color):
-        moves = []
+    def find_piece_positions(self, color):
+        piece_positions = []
         for row in range(ROWS):
             for col in range(COLS):
-                if self.squares[row][col].has_team_piece(color):
-                    p = self.squares[row][col].piece
-                    self.calc_moves(p, row, col, bool=False)
-                    for move in p.moves:
-                        moves.append(move)
-        return moves
+                if self.squares[row][col].isempty():
+                    piece_positions.append(0)
+                else:
+                    piece_positions.append(self.squares[row][col].piece.value)
+        return piece_positions
     
     def set_true_en_passant(self, piece):
         
@@ -78,9 +79,16 @@ class Board:
         
         piece.en_passant = True
 
-    def check_promotion(self, piece, final):
+    def check_promotion(self, piece, final, promotion):
         if final.row == 0 or final.row == 7:
-            self.squares[final.row][final.col].piece = Queen(piece.color)
+            if promotion == 'queen':
+                self.squares[final.row][final.col].piece = Queen(piece.color)
+            elif promotion == 'rook':
+                self.squares[final.row][final.col].piece = Rook(piece.color)
+            elif promotion == 'bishop':
+                self.squares[final.row][final.col].piece = Bishop(piece.color)
+            else:
+                self.squares[final.row][final.col].piece = Knight(piece.color)
 
     def borders_enemy_king(self, move, color):
         row_range = (move.final.row-1,move.final.row,move.final.row+1)
@@ -125,8 +133,25 @@ class Board:
                             return True
         return False
     
-    def check_condition(self, giving_check, color, mode, username):
+    def check_condition(self, giving_check, color, repeats):
         temp_board = copy.deepcopy(self)
+        if repeats == 3:
+            return 'Draw'
+        pieces = 0
+        for row in range(ROWS):
+                for col in range(COLS):
+                    if temp_board.squares[row][col].has_team_piece(color):
+                        pieces += 1
+                    elif temp_board.squares[row][col].has_enemy_piece(color):
+                        pieces += 1
+        if pieces <= 3:
+            if pieces == 2:
+                return 'Draw'
+            for row in range(ROWS):
+                for col in range(COLS):
+                    if not temp_board.squares[row][col].isempty():
+                        if temp_board.squares[row][col].piece.value in (3, 3.5):
+                            return 'Draw'
         for row in range(ROWS):
             for col in range(COLS):
                 if temp_board.squares[row][col].has_enemy_piece(color):
@@ -136,12 +161,9 @@ class Board:
                         if self.valid_move(p, m):
                             return "Ongoing"
         if giving_check:
-            if mode =='aivsai':
-                return f'Checkmate. {username.title()} won.'
-            else:
-                return f'Checkmate. {color.title()} won.'
-        else:
-            "Draw"
+            return f'Checkmate. {color.title()} won.'
+        return 'Draw'
+
 
     def calc_moves(self, piece, row, col, bool=True, mode=False):
         def pawn_moves():

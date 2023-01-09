@@ -1,4 +1,4 @@
-import pygame, sys, pygame_menu, os, random
+import pygame, sys, pygame_menu, os, sys
 from pygame_menu import themes
 from const import *
 from game import Game
@@ -6,7 +6,7 @@ from square import Square
 from move import Move
 from ai import AI
 from config import Config
-from bg_music import Bg_music
+from sound import Sound
 
 class Main:
 
@@ -17,8 +17,8 @@ class Main:
         self.game = Game()
         self.config = Config()
         self.mode = 'plvsai'
+        self.promotion = 'queen'
         self.color = 'white'
-        self.username = ""
         self.music = 'mixed'
 
     # Main menu to select options
@@ -28,15 +28,18 @@ class Main:
         # Start main loop
         def start_the_game():
             self.mainloop()
-
-        def store_username(value):
-            self.username = value
-
+            
         def choose_mode():
             mainmenu._open(mode)
 
         def set_mode(value, mode):
             self.mode = mode
+
+        def choose_promotion():
+            mainmenu._open(promotion)
+
+        def set_promotion(value, promotion):
+            self.promotion = promotion
 
         def choose_color():
             mainmenu._open(color)
@@ -48,26 +51,28 @@ class Main:
             mainmenu._open(music)
 
         def set_music(value, color):
-            self.music = color
+            self.music = music
 
         def choose_about():
             mainmenu._open(about)
 
-
         pygame.init()
         mainmenu = pygame_menu.Menu('Welcome', 800, 800, theme=themes.THEME_SOLARIZED)
-        mainmenu.add.text_input('Name: ', default='', onchange= store_username)
         mainmenu.add.button('Play', start_the_game)
         mainmenu.add.button('Mode', choose_mode)
+        mainmenu.add.button('Promotion settings', choose_promotion)
         mainmenu.add.button('Color', choose_color)
         mainmenu.add.button('Music', choose_music)
-        mainmenu.add.button('About', choose_music)
+        mainmenu.add.button('About', choose_about)
         mainmenu.add.button('Restart', game.reset)
         mainmenu.add.button('Quit', pygame_menu.events.EXIT)
         #https://pixabay.com/music/
         mode = pygame_menu.Menu('Select a Mode', 800, 800, theme=themes.THEME_BLUE)
-        mode.add.selector('Mode :', [('Player vs AI', 'plvsai'), ('1 vs 1', 'plvspl'), ('AI vs AI', 'aivsai')], onchange=set_mode)
+        mode.add.selector('Mode :', [('Player vs AI', 'plvsai'), ('AI vs AI', 'aivsai'), ('1 vs 1', 'plvspl')], onchange=set_mode)
 
+        promotion = pygame_menu.Menu('Select your preferred promotion piece', 800, 800, theme=themes.THEME_BLUE)
+        promotion.add.selector('Promotion piece :', [('Queen', 'queen'), ('Rook', 'rook'), ('Bishop', 'bishop'), ('Knight', 'knight')], onchange=set_promotion)
+        
         color = pygame_menu.Menu('Select a Color', 800, 800, theme=themes.THEME_BLUE)
         color.add.selector('Color :', [('White', 'white'), ('Black', 'black')], onchange=set_color)
 
@@ -100,51 +105,76 @@ class Main:
         dragger = self.game.dragger   
         giving_check = False
         mode = self.mode
+        promotion = self.promotion
         ongoing = True
         turn = "white"
-        username = self.username
+        last_boards = []
+        repeats = 0
         
         # Background music
         if self.music != 'None':
             playList = []
-            all_music = os.listdir('assets/sounds/bg_music/')
+            all_music = os.listdir('D:/Python_projekte/chess/assets/sounds/bg_music/')
             for track in all_music:
-                Bg_music.insert_into_playlist(playList, f'assets/sounds/bg_music/{track}')
-            Bg_music.start_playlist(playList)
+                Sound.insert_into_playlist(playList, f'D:/Python_projekte/chess/assets/sounds/bg_music/{track}')
+            Sound.start_playlist(playList)
                 
-        if mode =='plvsai' or mode =='aivsai':
+        if mode =='plvsai':
             player_color = self.color
             ai_color = 'white' if player_color == 'black' else 'black'
-            ai = AI(ai_color)
-        if mode == 'aivsai':
-            second_ai_color = 'white' if ai_color == 'black' else 'black'
-            second_ai = AI(second_ai_color)
+            strategy = "hard_code"
+            ai = AI(ai_color, strategy)
+        
+        if mode =='aivsai':
+            ai_color = 'white'
+            strategy = "hard_code"
+            ai = AI(ai_color, strategy)
+            second_ai_color = 'black'
+            strategy = "hard_code"
+            second_ai = AI(second_ai_color, strategy)
 
         while True:
             
             # show methods
             game.show_screen(screen, giving_check, turn)  
-            if mode =='plvsai' or mode =='aivsai':
-                if ongoing:
-                    if turn == ai_color:
-                        ai_moves = board.find_moves(ai_color)
-                        move, piece = ai.choose_move(board, ai_moves)
-                        if move is not None:
-                            ai.make_move(board, move, piece)
-                            giving_check = board.giving_check(piece, move)
-                            self.game.move_number += 1
-                            turn = 'white' if turn == 'black' else 'black'
+            if mode =='plvsai' and ongoing and turn == ai_color:
+                giving_check = ai.make_move(board, repeats)
+                piece_positions = board.find_piece_positions(turn)
+                last_boards.append(piece_positions)
+                if len(last_boards) > 9:
+                    last_boards = last_boards[(len(last_boards)-9):len(last_boards)]
+                    repeats = last_boards.count(piece_positions)
+                condition = board.check_condition(giving_check, turn, repeats)
+                if condition != "Ongoing": 
+                    ongoing = False
+                    print(condition)
+                turn = 'white' if turn == 'black' else 'black'
 
-            if mode =='aivsai':
-                if ongoing:
-                    if turn == second_ai_color:
-                        ai_moves = board.find_moves(second_ai_color)
-                        move, piece = second_ai.choose_move(board, ai_moves)
-                        if move is not None:
-                            second_ai.make_move(board, move, piece)
-                            giving_check = board.giving_check(piece, move)
-                            self.game.move_number += 1
-                            turn = 'white' if turn == 'black' else 'black'
+            if mode =='aivsai' and ongoing: 
+                if turn == ai_color:
+                    giving_check = ai.make_move(board, repeats)
+                    piece_positions = board.find_piece_positions(turn)
+                    last_boards.append(piece_positions)
+                    if len(last_boards) > 9:
+                        last_boards = last_boards[(len(last_boards)-9):len(last_boards)]
+                        repeats = last_boards.count(piece_positions)
+                    condition = board.check_condition(giving_check, turn, repeats)
+                    if condition != "Ongoing": 
+                        ongoing = False
+                        print(condition)
+                    turn = 'white' if turn == 'black' else 'black'
+                else:
+                    giving_check = second_ai.make_move(board, repeats)
+                    piece_positions = board.find_piece_positions(turn)
+                    last_boards.append(piece_positions)
+                    if len(last_boards) > 9:
+                        last_boards = last_boards[(len(last_boards)-9):len(last_boards)]
+                        repeats = last_boards.count(piece_positions)
+                    condition = board.check_condition(giving_check, turn, repeats)
+                    if condition != "Ongoing": 
+                        ongoing = False
+                        print(condition)
+                    turn = 'white' if turn == 'black' else 'black'
 
             if dragger.dragging:
                 dragger.update_blit(screen)
@@ -189,14 +219,17 @@ class Main:
                         if board.valid_move(dragger.piece, move):
                             # normal capture
                             captured = not board.squares[final_row][final_col].isempty()
-                            board.move(dragger.piece, move)   
-                            board.set_true_en_passant(dragger.piece)       
+                            board.move(dragger.piece, move, promotion)        
                             # sounds
                             game.play_sound(captured)
-                            self.game.move_number += 1
                             # animation when player is checkmated
                             giving_check = board.giving_check(piece, move)
-                            condition = board.check_condition(giving_check, piece.color, mode, username)
+                            piece_positions = board.find_piece_positions(turn)
+                            last_boards.append(piece_positions)
+                            if len(last_boards) > 9:
+                                last_boards = last_boards[(len(last_boards)-9):len(last_boards)]
+                                repeats = last_boards.count(piece_positions)
+                            condition = board.check_condition(giving_check, turn, repeats)
                             if condition != "Ongoing": 
                                 ongoing = False
                                 print(condition)
@@ -218,26 +251,11 @@ class Main:
                     if event.key == pygame.K_m:
                         main.mainmenu()
 
-                    # changing mode
-                    if event.key == pygame.K_a:
-                        game.reset()
-                        ongoing = True
-                        turn = 'white'
-                        game = self.game
-                        board = self.game.board
-                        dragger = self.game.dragger
-                        mode = mode
-                        mode_str = 'AI' if mode else '1v1'
-                        pygame.display.set_caption(f'Changing mode to {mode_str}')
-
                      # changing themes
                     elif event.key == pygame.K_r:
                         giving_check = False
-                        self.game.move_number = 0
                         pygame.display.set_caption("Restart")
-                        game.reset()
-                        ongoing = True
-                        turn = 'white'
+                        ongoing, turn, last_boards, repeats = game.reset()
                         game = self.game
                         board = self.game.board
                         dragger = self.game.dragger

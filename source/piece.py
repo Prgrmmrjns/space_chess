@@ -14,7 +14,7 @@ class Piece:
 
     def set_texture(self, size=80):
         self.texture = os.path.join(
-            f'assets/images/imgs-{size}px/{self.color}_{self.name}.png')
+            f'D:/Python_projekte/chess/assets/images/imgs-{size}px/{self.color}_{self.name}.png')
 
     def add_move(self, move):
         self.moves.append(move)
@@ -37,7 +37,7 @@ class Knight(Piece):
 class Bishop(Piece):
 
     def __init__(self, color):
-        super().__init__('bishop', color, 3)
+        super().__init__('bishop', color, 3.5)
 
 class Rook(Piece):
 

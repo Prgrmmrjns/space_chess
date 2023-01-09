@@ -4,7 +4,6 @@ from const import *
 from game import Game
 from piece import *
 from itertools import compress 
-from stockfish import Stockfish
 
 class AI:
     def __init__(self, color, strategy):

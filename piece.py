@@ -5,16 +5,23 @@ class Piece:
     def __init__(self, name, color, value, texture=None, texture_rect=None):
         self.name = name
         self.color = color
-        self.value = value
         self.moves = []
-        self.moved = False
-        self.texture = texture
+        
+        # Set value for AI evaluation
+        value_sign = 1 if color == 'white' else -1
+        self.value = value * value_sign
+        
+        # Get the correct image path using config
         self.set_texture()
         self.texture_rect = texture_rect
-
+    
     def set_texture(self, size=80):
-        self.texture = os.path.join(
-            f'D:/Python_projekte/chess/assets/images/imgs-{size}px/{self.color}_{self.name}.png')
+        from config import Config  # Import here to avoid circular import
+        config = Config()
+        
+        # Construct the image filename
+        filename = f'{self.color}_{self.name}.png'
+        self.texture = os.path.join(config.imgs_path, filename)
 
     def add_move(self, move):
         self.moves.append(move)
@@ -27,6 +34,7 @@ class Pawn(Piece):
     def __init__(self, color):
         self.dir = -1 if color == 'white' else 1
         self.en_passant = False
+        self.moved = False
         super().__init__('pawn', color, 1)
 
 class Knight(Piece):
@@ -42,6 +50,7 @@ class Bishop(Piece):
 class Rook(Piece):
 
     def __init__(self, color):
+        self.moved = False
         super().__init__('rook', color, 5)
 
 class Queen(Piece):
@@ -54,4 +63,5 @@ class King(Piece):
     def __init__(self, color):
         self.left_rook = None
         self.right_rook = None
+        self.moved = False
         super().__init__('king', color, 100)

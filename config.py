@@ -10,8 +10,12 @@ class Config:
         self.idx = 0
         self.theme = self.themes[self.idx]
         self.font = pygame.font.SysFont('monospace', 18, bold = True)
-        self.move_sound = Sound(os.path.join('D:/Python_projekte/chess/assets/sounds/move.wav'))
-        self.capture_sound = Sound(os.path.join('D:/Python_projekte/chess/assets/sounds/capture.wav'))
+        self.base_path = os.path.dirname(os.path.abspath(__file__))
+        self.assets_path = os.path.join(self.base_path, 'assets')
+        self.move_sound = Sound(os.path.join(self.assets_path, 'sounds', 'move.wav'))
+        self.capture_sound = Sound(os.path.join(self.assets_path, 'sounds', 'capture.wav'))
+        self.imgs_path = os.path.join(self.assets_path, 'images', 'imgs-80px')
+        self.font_path = os.path.join(self.assets_path, 'fonts', 'font.ttf')
 
     def change_theme(self):
         self.idx += 1

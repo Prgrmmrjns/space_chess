@@ -114,9 +114,11 @@ class Main:
         # Background music
         if self.music != 'None':
             playList = []
-            all_music = os.listdir('D:/Python_projekte/chess/assets/sounds/bg_music/')
+            music_path = os.path.join(self.game.config.assets_path, 'sounds', 'bg_music')
+            all_music = os.listdir(music_path)
             for track in all_music:
-                Sound.insert_into_playlist(playList, f'D:/Python_projekte/chess/assets/sounds/bg_music/{track}')
+                track_path = os.path.join(music_path, track)
+                Sound.insert_into_playlist(playList, track_path)
             Sound.start_playlist(playList)
                 
         if mode =='plvsai':

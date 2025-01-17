@@ -1,32 +1,63 @@
-# This is a Python Chess game 
+# Space Chess
 
-## Credits
-* This Python app is my version of the chess game created by AlejoG10 (https://github.com/AlejoG10/python-chess-ai-yt)
+A unique chess variant that combines traditional chess with space elements like asteroids, planets, black holes, and wormholes.
 
-## Requirements
-* Python >= 3.9
-* Installed packages: Pygame, Pygame_menu, Numpy
+## Features
 
-## Tips
-* Change settings: The application starts with the Pygame menu where one can change settings including mode, 
-player color, music preferences and promotion settings
-* Default settings: 
-  * AI vs Player
-  * Player color = white
-  * Music = mixed
-  * Promotion = queen
-* During the game the m button can be pressed to go back to the menu
-* If you want to create an exe file from the game I suggest the package "auto-py-to-exe"
+- Three unique civilizations with special abilities:
+  - Reptiloids: Can spawn extra pawns when capturing planets
+  - Crustaceans: Can move asteroids to capture pieces
+  - Blobs: Immune to black holes
+- Space elements that affect gameplay:
+  - Asteroids: Block movement and can be used strategically
+  - Planets: Allow pawn spawning upon capture
+  - Black Holes: Destroy pieces that land on or adjacent to them
+  - Wormholes: Allow pieces to teleport between connected pairs
+- Multiple game modes:
+  - Player vs AI
+  - Player vs Player
+  - AI vs AI
 
-## Next steps
-* Make a timer
-* Sidebar to change settings without opening the menu
-* Improve the AI, e.g. using deep learning
-* Allow the user to implement some AI settings and have an AI battle
-* Connect to Stockfish API
-* Bring the chess app to the web browser
-* Online Multiplayer mode
+## Running from Source
 
+1. Install the required dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-If you have any suggestions how I can implement the next steps or if you have any feedback please contact me!
-Have fun with my game!
+2. Run the game:
+```bash
+python main.py
+```
+
+## Building the Executable
+
+1. Install the required dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Build the executable:
+```bash
+python build_exe.py
+```
+
+3. Find the executable in the `dist` folder:
+- Windows: `dist/SpaceChess.exe`
+- macOS: `dist/SpaceChess`
+- Linux: `dist/SpaceChess`
+
+The executable contains all necessary files and can be run on any computer with the same operating system, without requiring Python or any dependencies to be installed.
+
+## Controls
+
+- Use the mouse to select and move pieces
+- Press 'R' to restart the game
+- Press 'ESC' to quit
+
+## Project Structure
+
+- `main.py`: Main game file
+- `build_exe.py`: Script to build the executable
+- `assets/`: Game assets (images, sounds)
+- `requirements.txt`: Python dependencies

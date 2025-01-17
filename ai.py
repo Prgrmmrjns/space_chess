@@ -3,6 +3,8 @@ import numpy as np
 from const import *
 from game import Game
 from piece import *
+from sound import Sound
+import os
 from itertools import compress 
 
 class AI:
@@ -41,8 +43,13 @@ class AI:
         move = all_moves[random.choice(list(compress(range(len(best_move_score_list)), best_move_score_list)))]
         piece = board.squares[move.initial.row][move.initial.col].piece
         board.move(piece, move) 
-        # sounds
-        self.game.play_sound(board.squares[move.final.row][move.final.col].isempty())
+        
+        # Play sound
+        if board.squares[move.final.row][move.final.col].isempty():
+            Sound(os.path.join('assets/sounds/move.wav')).play()
+        else:
+            Sound(os.path.join('assets/sounds/capture.wav')).play()
+            
         return board.giving_check(piece, move)
 
     # Check if move is valid and also store enemy moves when valid

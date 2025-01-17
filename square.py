@@ -1,12 +1,19 @@
-class Square:
+from const import *
+from piece import Piece
 
-    ALPHACOLS = {0: 'a', 1: 'b', 2: 'c', 3: 'd', 4: 'e', 5: 'f', 6: 'g', 7: 'h'}
+class Square:
 
     def __init__(self, row, col, piece=None):
         self.row = row
         self.col = col
         self.piece = piece
-        self.alphacol = self.ALPHACOLS[col]
+        self.has_asteroid = False
+        self.has_planet = False
+        self.planet_owner = None  # None, 'white', or 'black'
+        self.has_black_hole = False
+        self.wormhole_id = None  # None if no wormhole, otherwise 0 or 1 for pair identification
+        self.is_wormhole = False
+        self.alphacol = self.get_alphacol()
 
     def __eq__(self, other):
         return self.row == other.row and self.col == other.col
@@ -29,11 +36,25 @@ class Square:
     @staticmethod
     def in_range(*args):
         for arg in args:
-            if arg < 0 or arg > 7:
+            if arg < 0 or arg >= ROWS:
                 return False
         return True
 
-    @staticmethod
-    def get_alphacol(col):
-        ALPHACOLS = {0: 'a', 1: 'b', 2: 'c', 3: 'd', 4: 'e', 5: 'f', 6: 'g', 7: 'h'}
-        return ALPHACOLS[col]
+    def get_alphacol(self):
+        return chr(self.col + 97) if self.col < 26 else str(self.col)
+
+    def get_space_element_color(self):
+        if self.has_asteroid:
+            return ASTEROID_COLOR
+        elif self.has_planet:
+            return PLANET_COLORS[self.planet_owner]  # Get color based on planet owner
+        elif self.has_black_hole:
+            return BLACK_HOLE_COLOR
+        elif self.is_wormhole:
+            return WORMHOLE_COLORS[self.wormhole_id]['outer']
+        return None
+
+    def get_wormhole_inner_color(self):
+        if self.is_wormhole:
+            return WORMHOLE_COLORS[self.wormhole_id]['inner']
+        return None

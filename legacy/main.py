@@ -19,7 +19,7 @@ class Main:
         self.mode = 'plvsai'
         self.civilization = CIVILIZATION_REPTILOID
         self.color = 'white'
-        self.music = 'mixed'
+        self.music = 'None'
         # Space elements positions
         self.asteroid_positions = []
         self.planet_positions = []

@@ -20,7 +20,9 @@ import {
   setDoc,
   updateDoc,
   where,
+  type Transaction,
 } from 'firebase/firestore'
+import { nextElo } from '../engine/elo'
 import {
   handleAction,
   type MatchAction,
@@ -102,6 +104,25 @@ export async function loadLobby(uid: string): Promise<MatchRow[]> {
   return [...byId.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 }
 
+/** Record this pilot's own result. The rules reject a write to anyone else's profile. */
+export async function claimOwnRating(matchId: string): Promise<void> {
+  const uid = auth.currentUser?.uid
+  if (!uid) return
+  const snap = await getDoc(doc(db, 'matches', matchId))
+  if (!snap.exists()) return
+  const match = snap.data()
+  if (match.status !== 'done') return
+  const award = match.white_id === uid ? match.white_elo : match.black_id === uid ? match.black_elo : null
+  if (typeof award !== 'number') return
+  const profileRef = doc(db, 'profiles', uid)
+  const profile = await getDoc(profileRef)
+  if (!profile.exists()) return
+  const data = profile.data()
+  if (data.lastMatch === matchId) return
+  if (Math.abs(award - Number(data.elo)) > 32) return
+  await updateDoc(profileRef, { elo: award, games: Number(data.games) + 1, lastMatch: matchId })
+}
+
 export function watchMatch(id: string, onMatch: (match: MatchRow) => void): () => void {
   return onSnapshot(doc(db, 'matches', id), (snap) => {
     if (snap.exists()) onMatch(snap.data() as MatchRow)
@@ -143,9 +164,10 @@ function firestoreDb(): MatchDb {
       return runTransaction(db, async (tx) => {
         const current = await tx.get(ref)
         if (!current.exists() || current.data().updated_at !== expectedUpdatedAt) return null
-        const stored = clean(next)
+        const awards = await finishAwards(tx, next)
+        const stored = { ...clean(next), ...awards }
         tx.set(ref, stored)
-        return stored
+        return clean(next)
       })
     },
     async getProfile(id) {
@@ -159,9 +181,32 @@ function firestoreDb(): MatchDb {
         games: Number(data.games),
       } satisfies ProfileRow
     },
-    async setRating(id, elo, games) {
-      await updateDoc(doc(db, 'profiles', id), { elo, games, lastMatch: ratedMatchId })
+    async setRating(id, _elo, games) {
+      if (id !== auth.currentUser?.uid || !ratedMatchId) return
+      const snap = await getDoc(doc(db, 'matches', ratedMatchId))
+      if (!snap.exists()) return
+      const data = snap.data()
+      const award = data.white_id === id ? data.white_elo : data.black_elo
+      if (typeof award !== 'number') return
+      await updateDoc(doc(db, 'profiles', id), { elo: award, games, lastMatch: ratedMatchId })
     },
+  }
+}
+
+async function finishAwards(
+  tx: Transaction,
+  next: MatchRow,
+): Promise<{ white_elo: number; black_elo: number } | Record<string, never>> {
+  if (next.status !== 'done' || !next.rated || !next.black_id) return {}
+  const whiteSnap = await tx.get(doc(db, 'profiles', next.white_id))
+  const blackSnap = await tx.get(doc(db, 'profiles', next.black_id))
+  if (!whiteSnap.exists() || !blackSnap.exists()) return {}
+  const whiteElo = Number(whiteSnap.data().elo)
+  const blackElo = Number(blackSnap.data().elo)
+  const whiteScore = next.winner === 'white' ? 1 : next.winner === 'black' ? 0 : 0.5
+  return {
+    white_elo: nextElo(whiteElo, blackElo, whiteScore),
+    black_elo: nextElo(blackElo, whiteElo, 1 - whiteScore),
   }
 }
 

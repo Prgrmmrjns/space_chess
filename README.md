@@ -25,7 +25,7 @@ Guest games (vs AI, hot-seat, AI vs AI) need no account. Music starts after the 
 
 Accounts, open tables, live boards, and the Elo list live in the Firebase project `spacechess-fleet` (Firestore in `europe-west3`, email/password auth). The public web config is in `src/online/client.ts`. Firestore security rules are in `firestore.rules`.
 
-The same rules engine that runs the local game writes each match. A player can only change a rating by at most 32 points, and only once per finished match they were in. Resign, or claim the game after the opponent has left the clock untouched for a minute.
+The same rules engine that runs the local game writes each match. A seat can only be taken by the pilot who joins it, and a pilot can update only their own rating, by the result stored on a finished match they played. Resign, or claim the game after the opponent has left the clock untouched for a minute.
 
 Deploy rule changes with `firebase deploy --only firestore,auth` from this repo. Vercel stays a static Vite site: build `npm run build`, output `dist`. No extra environment variables are required for rated play. Add the Vercel hostname under Firebase Authentication → Settings → Authorized domains before signing in from that site.
 
@@ -111,5 +111,5 @@ legacy/            original Pygame game
 ## Known limitations
 
 - Hard still stops at its node budget on a crowded board.
-- A rating can move by at most 32 points per finished match. The exact Elo formula runs in the client; the database enforces the cap and that the match is finished.
+- A rating can move by at most 32 points per finished match, and only on the signed-in pilot's own profile. The board is still written by the two clients, so a seated player can submit a result; they cannot put another account in the empty seat or edit that account's rating.
 - A disconnect claim is a full minute with no move. Closing the tab does not by itself stop the clock.

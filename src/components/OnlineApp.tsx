@@ -4,6 +4,7 @@ import { getLegalMoves, statusLabel } from '../engine/game'
 import type { Civilization, Color, Move, PieceType, Pos } from '../engine/types'
 import {
   callMatch,
+  claimOwnRating,
   loadLobby,
   loadProfile,
   loadRanks,
@@ -89,6 +90,7 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
       const repeat = heard.current === next.updated_at
       const opened = heard.current === null
       heard.current = next.updated_at
+      if (next.status === 'done') void claimOwnRating(next.id).catch(() => undefined)
       if (!move || repeat || opened) return
       playEffect(move.capture || move.hazardDeaths?.length ? 'capture' : 'move')
     })
@@ -97,7 +99,11 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   async function refreshLobby() {
     if (!userId) return
     try {
-      setRows(await loadLobby(userId))
+      const loaded = await loadLobby(userId)
+      setRows(loaded)
+      for (const row of loaded) {
+        if (row.status === 'done') void claimOwnRating(row.id).catch(() => undefined)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The lobby could not be loaded')
     }
@@ -122,6 +128,7 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
       playEffect(move.capture || move.hazardDeaths?.length ? 'capture' : 'move')
     }
     heard.current = next.updated_at
+    if (next.status === 'done') void claimOwnRating(next.id).catch(() => undefined)
     setMatch(next)
     setSelected(null)
     setPromo(null)

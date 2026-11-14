@@ -5,14 +5,30 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/matches/$(id)).data;
     }
 
-    function finishedTogether(uid) {
+    function profileElo(uid) {
+      return get(/databases/$(database)/documents/profiles/$(uid)).data.elo;
+    }
+
+    function awardNear(uid, award) {
+      return award is number
+        && award == math.round(award)
+        && exists(/databases/$(database)/documents/profiles/$(uid))
+        && award >= profileElo(uid) - 32
+        && award <= profileElo(uid) + 32;
+    }
+
+    function ownFinishedAward(uid) {
+      let row = matchDoc(request.resource.data.lastMatch);
       return request.resource.data.lastMatch is string
         && exists(/databases/$(database)/documents/matches/$(request.resource.data.lastMatch))
-        && matchDoc(request.resource.data.lastMatch).status == 'done'
-        && (matchDoc(request.resource.data.lastMatch).white_id == uid
-            || matchDoc(request.resource.data.lastMatch).black_id == uid)
-        && (matchDoc(request.resource.data.lastMatch).white_id == request.auth.uid
-            || matchDoc(request.resource.data.lastMatch).black_id == request.auth.uid);
+        && row.status == 'done'
+        && row.white_id is string
+        && row.black_id is string
+        && row.white_id != row.black_id
+        && (
+          (row.white_id == uid && request.resource.data.elo == row.white_elo)
+          || (row.black_id == uid && request.resource.data.elo == row.black_elo)
+        );
     }
 
     match /profiles/{uid} {
@@ -24,11 +40,12 @@ service cloud.firestore {
         && request.resource.data.username is string
         && request.resource.data.username.matches('^[A-Za-z0-9_]{3,16}$');
       allow update: if request.auth != null
+        && request.auth.uid == uid
         && request.resource.data.username == resource.data.username
         && request.resource.data.games == resource.data.games + 1
         && request.resource.data.elo >= resource.data.elo - 32
         && request.resource.data.elo <= resource.data.elo + 32
-        && finishedTogether(uid)
+        && ownFinishedAward(uid)
         && resource.data.get('lastMatch', '') != request.resource.data.lastMatch;
       allow delete: if false;
     }
@@ -43,19 +60,53 @@ service cloud.firestore {
         && request.auth.uid == request.resource.data.white_id
         && request.resource.data.status == 'open'
         && request.resource.data.black_id == null
+        && request.resource.data.winner == null
+        && request.resource.data.white_elo == null
+        && request.resource.data.black_elo == null
         && request.resource.data.rated == true;
       allow update: if request.auth != null
+        && resource.data.status != 'done'
         && request.resource.data.white_id == resource.data.white_id
+        && request.resource.data.white_civ == resource.data.white_civ
         && request.resource.data.rated == resource.data.rated
         && request.resource.data.code == resource.data.code
         && (
-          request.auth.uid == resource.data.white_id
-          || request.auth.uid == resource.data.black_id
-          || (
+          (
             resource.data.status == 'open'
             && resource.data.black_id == null
-            && request.resource.data.black_id == request.auth.uid
+            && request.auth.uid == request.resource.data.black_id
+            && request.auth.uid != resource.data.white_id
             && request.resource.data.status == 'playing'
+            && request.resource.data.white_elo == null
+            && request.resource.data.black_elo == null
+          )
+          || (
+            resource.data.status == 'playing'
+            && resource.data.black_id is string
+            && resource.data.black_id != resource.data.white_id
+            && request.resource.data.black_id == resource.data.black_id
+            && request.resource.data.black_civ == resource.data.black_civ
+            && (
+              request.auth.uid == resource.data.white_id
+              || request.auth.uid == resource.data.black_id
+            )
+            && (
+              (
+                request.resource.data.status == 'playing'
+                && request.resource.data.white_elo == null
+                && request.resource.data.black_elo == null
+              )
+              || (
+                request.resource.data.status == 'done'
+                && (
+                  request.resource.data.winner == 'white'
+                  || request.resource.data.winner == 'black'
+                  || request.resource.data.winner == null
+                )
+                && awardNear(resource.data.white_id, request.resource.data.white_elo)
+                && awardNear(resource.data.black_id, request.resource.data.black_elo)
+              )
+            )
           )
         );
       allow delete: if false;

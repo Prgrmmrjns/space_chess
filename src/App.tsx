@@ -1,12 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
-import { CIV_LABELS } from './engine/constants'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { CIV_LABELS, FLEET_NAMES } from './engine/constants'
 import { cloneState } from './engine/board'
 import { getLegalMoves, playMove, playMoveObject, startGame, statusLabel } from './engine/game'
-import type { GameConfig, GameState, Move, PieceType, Pos } from './engine/types'
+import type { Civilization, Color, GameConfig, GameState, Move, PieceType, Pos } from './engine/types'
+import { opponent } from './engine/types'
+import { tauntLine, type TauntEvent } from './ai/taunts'
 import { Board } from './components/Board'
+import { ShipKey } from './components/ShipKey'
+import { CivPortrait } from './components/CivPortrait'
 import { RulesPanel } from './components/RulesPanel'
 import { SetupScreen } from './components/SetupScreen'
+import { Tutorial, tutorialSeen } from './components/Tutorial'
 import { useAiWorker } from './hooks/useAiWorker'
+import { useAudio } from './hooks/useAudio'
+
+const OnlineApp = lazy(() => import('./components/OnlineApp').then((mod) => ({ default: mod.OnlineApp })))
 
 const DEFAULT_CONFIG: GameConfig = {
   mode: 'pvai',
@@ -15,7 +23,7 @@ const DEFAULT_CONFIG: GameConfig = {
   civs: { white: 'reptiloid', black: 'crustacean' },
 }
 
-type Screen = 'setup' | 'play'
+type Screen = 'setup' | 'play' | 'online' | 'ranks'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('setup')
@@ -25,8 +33,12 @@ export default function App() {
   const [selected, setSelected] = useState<Pos | null>(null)
   const [rulesOpen, setRulesOpen] = useState(false)
   const [thinking, setThinking] = useState(false)
+  const [briefing, setBriefing] = useState(false)
+  const [taunt, setTaunt] = useState<string | null>(null)
+  const [impacts, setImpacts] = useState<Pos[]>([])
   const [promo, setPromo] = useState<{ from: Pos; to: Pos; moves: Move[] } | null>(null)
   const { requestMove } = useAiWorker()
+  const { muted, toggleMute, playEffect } = useAudio()
 
   const legalForSelected = useMemo(() => {
     if (!state || !selected) return []
@@ -41,7 +53,29 @@ export default function App() {
     setHistory([])
     setSelected(null)
     setPromo(null)
+    setImpacts([])
     setScreen('play')
+    setBriefing(!tutorialSeen())
+    if (config.mode === 'pvai') {
+      const ai = config.playerColor === 'white' ? 'black' : 'white'
+      setTaunt(tauntLine(fresh.civs[ai], config.difficulty, 'start'))
+    } else {
+      setTaunt(null)
+    }
+  }
+
+  function noteMove(next: GameState) {
+    const spots = impactSquares(next.lastMove)
+    setImpacts(spots)
+    if (next.lastMove?.capture || next.lastMove?.hazardDeaths?.length) playEffect('capture')
+    else playEffect('move')
+    if (config.mode === 'pvai' || config.mode === 'aivai') {
+      const mover = opponent(next.turn)
+      const aiColor = config.playerColor === 'white' ? 'black' : 'white'
+      if (config.mode === 'aivai' || mover === aiColor) {
+        setTaunt(tauntLine(next.civs[mover], config.difficulty, tauntEvent(next, mover)))
+      }
+    }
   }
 
   function pushMove(next: GameState) {
@@ -50,6 +84,7 @@ export default function App() {
     setState(next)
     setSelected(null)
     setPromo(null)
+    noteMove(next)
   }
 
   function handleSelect(pos: Pos) {
@@ -57,8 +92,6 @@ export default function App() {
     if (state.status === 'checkmate' || state.status === 'stalemate' || state.status === 'draw') {
       return
     }
-
-    // Human may only move when it's their turn
     if (!isHumanTurn(state, config)) return
 
     const piece = state.board[pos.row][pos.col].piece
@@ -76,27 +109,23 @@ export default function App() {
       }
     }
 
-    if (piece && piece.color === state.turn) {
-      setSelected(pos)
-    } else {
-      setSelected(null)
-    }
+    if (piece && piece.color === state.turn) setSelected(pos)
+    else setSelected(null)
   }
 
   function undo() {
     if (history.length === 0 || thinking) return
-    // In PvAI, undo the AI reply as well when present
     let steps = 1
     if (config.mode === 'pvai' && history.length >= 2) steps = 2
-    const nextHistory = history.slice(0, -steps)
     const restored = history[history.length - steps]
-    setHistory(nextHistory)
+    setHistory(history.slice(0, -steps))
     setState(cloneState(restored))
     setSelected(null)
     setPromo(null)
+    setImpacts([])
+    setTaunt(null)
   }
 
-  // AI turns
   useEffect(() => {
     if (!state || screen !== 'play') return
     if (state.status !== 'playing' && state.status !== 'check') return
@@ -104,7 +133,7 @@ export default function App() {
 
     let cancelled = false
     setThinking(true)
-    const delay = config.mode === 'aivai' ? 350 : 120
+    const delay = config.mode === 'aivai' ? 900 : 800
     const timer = window.setTimeout(async () => {
       const move = await requestMove(state, config.difficulty)
       if (cancelled || !move) {
@@ -115,6 +144,7 @@ export default function App() {
       if (!cancelled) {
         setHistory((h) => [...h, cloneState(state)])
         setState(next)
+        noteMove(next)
         setThinking(false)
       }
     }, delay)
@@ -123,13 +153,37 @@ export default function App() {
       cancelled = true
       window.clearTimeout(timer)
     }
+    // noteMove closes over config and playEffect; both are stable enough for a turn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, screen, config, requestMove])
+
+  const aiCiv: Civilization | null =
+    config.mode === 'pvai'
+      ? config.civs[config.playerColor === 'white' ? 'black' : 'white']
+      : null
 
   return (
     <div className="app">
       <div className="stars" aria-hidden />
       {screen === 'setup' ? (
-        <SetupScreen value={config} onChange={setConfig} onStart={begin} />
+        <SetupScreen
+          value={config}
+          onChange={setConfig}
+          onStart={begin}
+          onOnline={() => setScreen('online')}
+          onLeaderboard={() => setScreen('ranks')}
+        />
+      ) : screen === 'online' || screen === 'ranks' ? (
+        <Suspense fallback={<p className="status">Opening the lobby…</p>}>
+          <OnlineApp
+            key={screen}
+            initial={screen === 'ranks' ? 'ranks' : 'lobby'}
+            onExit={() => setScreen('setup')}
+            muted={muted}
+            onToggleMute={toggleMute}
+            playEffect={playEffect}
+          />
+        </Suspense>
       ) : (
         state && (
           <main className="play">
@@ -141,6 +195,9 @@ export default function App() {
               <div className="bar-actions">
                 <button type="button" onClick={() => setRulesOpen(true)}>
                   Rules
+                </button>
+                <button type="button" onClick={toggleMute}>
+                  {muted ? 'Music off' : 'Music on'}
                 </button>
                 <button type="button" onClick={undo} disabled={history.length === 0 || thinking}>
                   Undo
@@ -160,6 +217,9 @@ export default function App() {
                   label="Black"
                   civ={state.civs.black}
                   active={state.turn === 'black'}
+                  talking={!!taunt && aiCiv === state.civs.black}
+                  line={aiCiv === state.civs.black ? taunt : null}
+                  thinking={thinking && thinkingSide(state, config) === 'black'}
                 />
               </aside>
 
@@ -170,6 +230,7 @@ export default function App() {
                 onSelect={handleSelect}
                 orientation={orientation}
                 disabled={thinking || !isHumanTurn(state, config)}
+                impacts={impacts}
               />
 
               <aside className="side-panel right">
@@ -177,40 +238,55 @@ export default function App() {
                   label="White"
                   civ={state.civs.white}
                   active={state.turn === 'white'}
+                  talking={!!taunt && aiCiv === state.civs.white}
+                  line={aiCiv === state.civs.white ? taunt : null}
+                  thinking={thinking && thinkingSide(state, config) === 'white'}
                 />
                 <div className="tips">
-                  {thinking && <p className="thinking">Calculating trajectory…</p>}
                   {state.lastMove?.spawnedPawns?.length ? (
-                    <p>Planet claimed — reinforcements inbound.</p>
+                    <p>Planet claimed — fighters inbound.</p>
                   ) : null}
-                  {state.lastMove?.asteroidPush ? (
-                    <p>Asteroid shoved through the corridor.</p>
-                  ) : null}
+                  {state.lastMove?.asteroidPush ? <p>Asteroid shoved down the file.</p> : null}
+                  {state.lastMove?.solarPush?.length ? <p>A star flared and shoved a hull.</p> : null}
+                  <p className="hint">
+                    Select a ship, then a highlight. Both flagships must stay safe.
+                  </p>
                 </div>
               </aside>
             </div>
+            <ShipKey
+              selected={
+                selected ? (state.board[selected.row][selected.col].piece?.type ?? null) : null
+              }
+            />
           </main>
         )
       )}
 
       <RulesPanel open={rulesOpen} onClose={() => setRulesOpen(false)} />
+      {briefing && state && (
+        <Tutorial
+          civ={config.playerColor === 'black' ? state.civs.black : state.civs.white}
+          onClose={() => setBriefing(false)}
+        />
+      )}
 
       {promo && (
         <div className="modal-backdrop">
           <div className="modal promo">
-            <h2>Promote pawn</h2>
+            <h2>Promote fighter</h2>
             <div className="promo-row">
-              {(['queen', 'rook', 'bishop', 'knight'] as PieceType[]).map((t) => (
+              {(['queen', 'rook', 'bishop', 'knight'] as PieceType[]).map((type) => (
                 <button
-                  key={t}
+                  key={type}
                   type="button"
                   onClick={() => {
                     if (!state) return
-                    const result = playMove(state, promo.from, promo.to, t)
+                    const result = playMove(state, promo.from, promo.to, type)
                     if (result.ok) pushMove(result.state)
                   }}
                 >
-                  {t}
+                  {FLEET_NAMES[type]}
                 </button>
               ))}
             </div>
@@ -219,6 +295,32 @@ export default function App() {
       )}
     </div>
   )
+}
+
+function impactSquares(move: Move | null): Pos[] {
+  if (!move) return []
+  const spots: Pos[] = []
+  if (move.capture) spots.push(move.finalTo ?? move.to)
+  if (move.asteroidPush?.destroyedEnemy) spots.push(move.asteroidPush.destroyedEnemy)
+  if (move.hazardDeaths) spots.push(...move.hazardDeaths)
+  return spots
+}
+
+function tauntEvent(state: GameState, mover: GameState['turn']): TauntEvent {
+  if (state.status === 'checkmate' || state.status === 'stalemate' || state.status === 'draw') {
+    return state.winner === mover ? 'win' : 'lose'
+  }
+  if (state.status === 'check') return 'check'
+  const taken = state.lastMove?.captured
+  if (taken === 'queen' || taken === 'rook') return 'blunder'
+  if (state.lastMove?.capture || state.lastMove?.hazardDeaths?.length) return 'capture'
+  return state.lastMove ? 'move' : 'start'
+}
+
+function thinkingSide(state: GameState, config: GameConfig): Color | null {
+  if (config.mode === 'aivai') return state.turn
+  if (config.mode !== 'pvai') return null
+  return config.playerColor === 'white' ? 'black' : 'white'
 }
 
 function isHumanTurn(state: GameState, config: GameConfig): boolean {
@@ -231,15 +333,24 @@ function CivBadge({
   label,
   civ,
   active,
+  talking,
+  line,
+  thinking,
 }: {
   label: string
   civ: keyof typeof CIV_LABELS
   active: boolean
+  talking?: boolean
+  line?: string | null
+  thinking?: boolean
 }) {
   return (
     <div className={`civ-badge civ-${civ} ${active ? 'active' : ''}`}>
+      <CivPortrait civ={civ} talking={talking} />
       <span className="eyebrow">{label}</span>
       <strong>{CIV_LABELS[civ]}</strong>
+      {thinking && <p className="thinking">Calculating trajectory…</p>}
+      {line && <p className="taunt">{line}</p>}
     </div>
   )
 }

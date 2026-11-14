@@ -47,6 +47,21 @@ export function HazardMark({ square }: { square: Square }) {
     )
   }
 
+  if (square.hazard === 'star') {
+    return (
+      <span className="hazard star" title="Star">
+        <svg viewBox="0 0 40 40" aria-hidden>
+          <polygon
+            points="20,4 24,16 36,16 26,24 30,36 20,28 10,36 14,24 4,16 16,16"
+            fill="#f2d36b"
+            stroke="#a87820"
+            strokeWidth="1.5"
+          />
+        </svg>
+      </span>
+    )
+  }
+
   if (square.hazard === 'blackhole') {
     return (
       <span className="hazard blackhole" title="Black hole">

@@ -1,4 +1,5 @@
-import { CIV_ABILITIES, CIV_LABELS } from '../engine/constants'
+import { CIV_ABILITIES, CIV_LABELS, FLEET_MOVES, FLEET_NAMES } from '../engine/constants'
+import type { PieceType } from '../engine/types'
 
 interface Props {
   open: boolean
@@ -18,12 +19,52 @@ export function RulesPanel({ open, onClose }: Props) {
         </header>
         <div className="modal-body">
           <section>
-            <h3>The board</h3>
+            <h3>The fleet</h3>
             <p>
-              Space Chess is chess on a <strong>16×16</strong> field. Armies start on the
-              middle eight files. Pawns promote on the far rank. Castling, checks, and
-              mates work as in chess once space hazards are accounted for.
+              Space Chess is a 16×16 fleet battle. Every file starts occupied: a full rank of{' '}
+              <strong>{FLEET_NAMES.pawn.toLowerCase()}s</strong>, and a back rank that is the
+              standard line twice.
             </p>
+            <ul>
+              {(Object.keys(FLEET_MOVES) as PieceType[]).map((type) => (
+                <li key={type}>
+                  <strong>{FLEET_NAMES[type]}:</strong> {FLEET_MOVES[type]}
+                </li>
+              ))}
+            </ul>
+            <p>
+              Each side has <strong>two flagships</strong>. You are in check if either one is
+              attacked, and a move that leaves either one in check is illegal. Checkmate is no
+              legal reply while a flagship is under attack. A flagship may castle only inside its
+              own half of the back rank. Fighters promote on the far rank. En passant still works.
+            </p>
+          </section>
+          <section>
+            <h3>Hazards move</h3>
+            <ul>
+              <li>
+                <strong>Asteroids</strong> drift one file after every full turn and bounce off
+                edges, ships, and other hazards. A corner mark shows the next square.
+              </li>
+              <li>
+                <strong>Planets</strong> walk clockwise around their sun. The dashed ring is that
+                circle after the sun’s next step. Most ships must stop on a planet. Landing claims
+                it.
+              </li>
+              <li>
+                <strong>Stars</strong> are the suns. They drift one diagonal step and burn any ship
+                they land on. Blobs and Solarites are not burned. A corner mark shows the next
+                square.
+              </li>
+              <li>
+                <strong>Black holes</strong> stay put. The hole and every adjacent square are
+                forbidden unless you are a Blob.
+              </li>
+              <li>
+                <strong>Wormholes</strong> stay paired. Enter one and you exit the other, capturing
+                an enemy on the exit.
+              </li>
+            </ul>
           </section>
           <section>
             <h3>Civilisations</h3>
@@ -36,33 +77,11 @@ export function RulesPanel({ open, onClose }: Props) {
             </ul>
           </section>
           <section>
-            <h3>Hazards</h3>
-            <ul>
-              <li>
-                <strong>Asteroids</strong> block movement. Crustaceans may land on one and
-                shove it up to four squares toward the enemy; collisions can crush a foe
-                and destroy the rock.
-              </li>
-              <li>
-                <strong>Planets</strong> stop sliding pieces. Landing claims the planet and
-                spawns pawns on empty adjacent squares (1 normally, up to 3 for
-                Reptiloids). Reclaiming your own planet does not spawn again.
-              </li>
-              <li>
-                <strong>Black holes</strong> create a 3×3 gravity well. Non-Blob pieces
-                cannot enter it. Blobs may occupy the hole itself.
-              </li>
-              <li>
-                <strong>Wormholes</strong> come in colour-matched pairs. Entering one
-                teleports you to its twin (capturing an enemy on the exit if present).
-              </li>
-            </ul>
-          </section>
-          <section>
-            <h3>Wins & draws</h3>
+            <h3>Wins, draws, ratings</h3>
             <p>
-              Checkmate wins. Stalemate, threefold repetition, the 50-move rule
-              (100 half-moves), and bare insufficient material are draws.
+              Checkmate wins. So does losing a flagship to a star. Stalemate, threefold repetition,
+              the 50-move rule, and bare kings are draws. Rated online games move Elo by the
+              usual 32-point scale, starting at 1200. Guest games against the AI do not.
             </p>
           </section>
         </div>

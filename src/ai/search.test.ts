@@ -28,14 +28,16 @@ describe('AI search', () => {
         planets: [],
         blackHoles: [],
         wormholePairs: [],
+        stars: [],
       },
     })
-    // Clear and set hanging queen
     for (const row of state.board) {
       for (const sq of row) sq.piece = null
     }
-    state.board[15][8].piece = { type: 'king', color: 'white', moved: true }
-    state.board[0][8].piece = { type: 'king', color: 'black', moved: true }
+    state.board[15][0].piece = { type: 'king', color: 'white', moved: true }
+    state.board[15][15].piece = { type: 'king', color: 'white', moved: true }
+    state.board[0][0].piece = { type: 'king', color: 'black', moved: true }
+    state.board[0][15].piece = { type: 'king', color: 'black', moved: true }
     state.board[10][8].piece = { type: 'queen', color: 'black', moved: true }
     state.board[12][8].piece = { type: 'rook', color: 'white', moved: true }
     state.turn = 'white'

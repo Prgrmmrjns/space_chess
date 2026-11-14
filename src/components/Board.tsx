@@ -1,4 +1,4 @@
-import { BOARD_SIZE } from '../engine/constants'
+import { BOARD_SIZE, FLEET_NAMES } from '../engine/constants'
 import type { Civilization, Color, GameState, Move, Pos } from '../engine/types'
 import { samePos } from '../engine/types'
 import { HazardMark } from './HazardMark'
@@ -11,6 +11,7 @@ interface Props {
   onSelect: (pos: Pos) => void
   orientation: Color
   disabled?: boolean
+  impacts?: Pos[]
 }
 
 function fileLabel(col: number): string {
@@ -24,6 +25,7 @@ export function Board({
   onSelect,
   orientation,
   disabled,
+  impacts = [],
 }: Props) {
   const rows =
     orientation === 'white'
@@ -53,6 +55,7 @@ export function Board({
             const civ: Civilization = sq.piece
               ? state.civs[sq.piece.color]
               : state.civs.white
+            const exploding = impacts.some((impact) => samePos(impact, pos))
 
             return (
               <button
@@ -65,15 +68,17 @@ export function Board({
                   moveHit ? (moveHit.capture ? 'target-capture' : 'target-move') : '',
                   isLast ? 'last-move' : '',
                   sq.hazard ? `has-${sq.hazard}` : '',
+                  exploding ? 'exploding' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')}
                 onClick={() => !disabled && onSelect(pos)}
                 disabled={disabled}
                 aria-label={`${fileLabel(col)}${BOARD_SIZE - row}${
-                  sq.piece ? `, ${sq.piece.color} ${sq.piece.type}` : ''
+                  sq.piece ? `, ${sq.piece.color} ${FLEET_NAMES[sq.piece.type]}` : ''
                 }`}
               >
+                {exploding && <span className="blast" />}
                 <HazardMark square={sq} />
                 {sq.piece && (
                   <span className="piece-wrap">

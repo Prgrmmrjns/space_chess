@@ -52,11 +52,15 @@ export function evaluate(state: GameState, perspective: Color): number {
   if (isInCheck(state, opponent(perspective))) score += 35
   if (isInCheck(state, perspective)) score -= 35
 
-  // Civ flavor
   const myCiv = state.civs[perspective]
-  if (myCiv === 'blob') score += 15
-  if (myCiv === 'reptiloid') score += 10
-  if (myCiv === 'crustacean') score += 10
+  if (myCiv === 'blob') score += state.space.blackHoles.length * 12
+  if (myCiv === 'solarite') score += state.space.stars.length * 6
+  if (myCiv === 'crustacean') score += state.space.asteroids.length * 4
+  if (myCiv === 'silicate') score += state.space.planets.length * 4
+  if (myCiv === 'reptiloid') {
+    const claimable = state.space.planets.filter((planet) => planet.owner !== perspective).length
+    score += claimable * 8
+  }
 
   return score
 }

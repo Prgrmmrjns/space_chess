@@ -1,16 +1,17 @@
 import {
   ASTEROID_PUSH_RANGE,
-  BLACK_BACK,
   BOARD_SIZE,
   DEFAULT_SPAWN,
-  PIECE_START_COL,
   REPTILOID_SPAWN,
   WHITE_BACK,
+  BLACK_BACK,
 } from './constants'
 import {
   adjacentEmpty,
+  advanceHazards,
   cloneState,
-  findKing,
+  countKings,
+  findKings,
   findWormholeExit,
   getSquare,
   inBounds,
@@ -18,6 +19,11 @@ import {
   isCrustacean,
   isNearBlackHole,
   isReptiloid,
+  isSilicate,
+  isSolarite,
+  isStarImmune,
+  otherBlackHole,
+  paintSpace,
 } from './board'
 import type { Color, GameState, Move, Piece, PieceType, Pos } from './types'
 import { opponent, samePos } from './types'
@@ -26,59 +32,80 @@ function pawnDir(color: Color): number {
   return color === 'white' ? -1 : 1
 }
 
-function addPseudo(
-  moves: Move[],
-  from: Pos,
-  to: Pos,
-  extras: Partial<Move> = {},
-): void {
+function addPseudo(moves: Move[], from: Pos, to: Pos, extras: Partial<Move> = {}): void {
   moves.push({ from, to, ...extras })
 }
 
-/** Resolve where a piece actually ends after hazards (pre-check filter). */
+function landExtras(to: Pos, final: Pos, capture?: boolean): Partial<Move> {
+  return {
+    finalTo: samePos(final, to) ? undefined : final,
+    capture: capture || undefined,
+  }
+}
+
+/** Where a ship actually stops, after wormholes and blob black-hole hops. */
 export function resolveLanding(
   state: GameState,
   piece: Piece,
   to: Pos,
-): { final: Pos; consumed: boolean; wormhole: boolean } | null {
-  // Non-blobs may not enter the black-hole gravity well.
-  if (isNearBlackHole(state, to) && !isBlob(state, piece.color)) {
-    return null
+): { final: Pos } | null {
+  const sq = getSquare(state, to)
+
+  if (sq.hazard === 'blackhole') {
+    if (!isBlob(state, piece.color)) return null
+    const exit = otherBlackHole(state, to)
+    if (!exit) return { final: to }
+    const exitPiece = getSquare(state, exit).piece
+    if (exitPiece && exitPiece.color === piece.color) return null
+    return { final: exit }
   }
 
-  if (getSquare(state, to).hazard === 'wormhole') {
+  if (isNearBlackHole(state, to) && !isBlob(state, piece.color)) return null
+
+  if (sq.hazard === 'star' && !isStarImmune(state, piece.color)) return null
+
+  if (sq.hazard === 'wormhole') {
     const exit = findWormholeExit(state, to)
     if (!exit) return null
     const exitSq = getSquare(state, exit)
     if (exitSq.piece && exitSq.piece.color === piece.color) return null
-    // Exit also cannot dump a non-blob into a black hole.
-    if (isNearBlackHole(state, exit) && !isBlob(state, piece.color)) {
-      return null
-    }
-    return { final: exit, consumed: false, wormhole: true }
+    if (isNearBlackHole(state, exit) && !isBlob(state, piece.color)) return null
+    if (exitSq.hazard === 'star' && !isStarImmune(state, piece.color)) return null
+    return { final: exit }
   }
 
-  return { final: to, consumed: false, wormhole: false }
+  return { final: to }
 }
 
 function canOccupy(
   state: GameState,
   piece: Piece,
   pos: Pos,
-  opts: { allowAsteroid?: boolean; allowEnemy?: boolean } = {},
+  opts: { allowAsteroid?: boolean } = {},
 ): boolean {
   const sq = getSquare(state, pos)
   if (sq.hazard === 'asteroid') {
     return !!opts.allowAsteroid && isCrustacean(state, piece.color)
   }
-  if (sq.hazard === 'blackhole') {
-    return isBlob(state, piece.color)
-  }
-  if (sq.piece) {
-    if (sq.piece.color === piece.color) return false
-    return opts.allowEnemy !== false
-  }
+  if (sq.hazard === 'blackhole') return isBlob(state, piece.color)
+  if (sq.hazard === 'star') return isStarImmune(state, piece.color)
+  if (sq.piece) return sq.piece.color !== piece.color
   return true
+}
+
+function needsPromotion(piece: Piece, final: Pos): PieceType | undefined {
+  if (piece.type !== 'pawn') return undefined
+  if (final.row === 0 || final.row === BOARD_SIZE - 1) return 'queen'
+  return undefined
+}
+
+function pawnBlocked(state: GameState, piece: Piece, pos: Pos): boolean {
+  const sq = getSquare(state, pos)
+  if (sq.piece) return true
+  if (sq.hazard === 'asteroid') return true
+  if (sq.hazard === 'star' && !isStarImmune(state, piece.color)) return true
+  if (sq.hazard === 'blackhole') return !isBlob(state, piece.color)
+  return false
 }
 
 function generatePawnMoves(state: GameState, from: Pos, piece: Piece): Move[] {
@@ -86,63 +113,49 @@ function generatePawnMoves(state: GameState, from: Pos, piece: Piece): Move[] {
   const dir = pawnDir(piece.color)
   const startRow = piece.color === 'white' ? 14 : 1
 
-  // Forward
   const one: Pos = { row: from.row + dir, col: from.col }
-  if (inBounds(one.row, one.col)) {
-    const sq = getSquare(state, one)
-    if (!sq.piece && sq.hazard !== 'asteroid') {
-      const land = resolveLanding(state, piece, one)
-      if (land) {
-        const promo = needsPromotion(piece, land.final)
-        addPseudo(moves, from, one, {
-          finalTo: land.wormhole ? land.final : undefined,
-          promotion: promo,
-        })
-      }
-      if (!piece.moved && from.row === startRow) {
+  if (inBounds(one.row, one.col) && !pawnBlocked(state, piece, one)) {
+    const land = resolveLanding(state, piece, one)
+    if (land) {
+      addPseudo(moves, from, one, {
+        ...landExtras(one, land.final),
+        promotion: needsPromotion(piece, land.final),
+      })
+      const first = getSquare(state, one)
+      if (!piece.moved && from.row === startRow && !first.hazard) {
         const two: Pos = { row: from.row + 2 * dir, col: from.col }
-        if (inBounds(two.row, two.col)) {
-          const sq2 = getSquare(state, two)
-          if (!sq2.piece && sq2.hazard !== 'asteroid' && sq2.hazard !== 'planet') {
-            const land2 = resolveLanding(state, piece, two)
-            if (land2) {
-              addPseudo(moves, from, two, {
-                finalTo: land2.wormhole ? land2.final : undefined,
-              })
-            }
+        if (
+          inBounds(two.row, two.col) &&
+          !pawnBlocked(state, piece, two) &&
+          getSquare(state, two).hazard !== 'planet'
+        ) {
+          const land2 = resolveLanding(state, piece, two)
+          if (land2) {
+            addPseudo(moves, from, two, landExtras(two, land2.final))
           }
         }
       }
     }
   }
 
-  // Captures
   for (const dc of [-1, 1]) {
     const cap: Pos = { row: from.row + dir, col: from.col + dc }
     if (!inBounds(cap.row, cap.col)) continue
     const sq = getSquare(state, cap)
-    const ep =
-      state.enPassant && samePos(state.enPassant, cap) ? true : false
+    const ep = state.enPassant && samePos(state.enPassant, cap)
     const enemy = sq.piece && sq.piece.color !== piece.color
     if (!enemy && !ep) continue
     if (sq.hazard === 'asteroid' && !isCrustacean(state, piece.color)) continue
+    if (sq.hazard === 'star' && !isStarImmune(state, piece.color)) continue
     const land = resolveLanding(state, piece, cap)
     if (!land) continue
-    const promo = needsPromotion(piece, land.final)
     addPseudo(moves, from, cap, {
-      finalTo: land.wormhole ? land.final : undefined,
-      capture: true,
-      promotion: promo,
+      ...landExtras(cap, land.final, true),
+      promotion: needsPromotion(piece, land.final),
     })
   }
 
   return moves
-}
-
-function needsPromotion(piece: Piece, final: Pos): PieceType | undefined {
-  if (piece.type !== 'pawn') return undefined
-  if (final.row === 0 || final.row === BOARD_SIZE - 1) return 'queen'
-  return undefined
 }
 
 function generateSlideMoves(
@@ -152,6 +165,10 @@ function generateSlideMoves(
   dirs: [number, number][],
 ): Move[] {
   const moves: Move[] = []
+  const glidesPlanets =
+    isSilicate(state, piece.color) &&
+    (piece.type === 'rook' || piece.type === 'bishop' || piece.type === 'queen')
+
   for (const [dr, dc] of dirs) {
     let r = from.row + dr
     let c = from.col + dc
@@ -162,14 +179,26 @@ function generateSlideMoves(
       if (sq.hazard === 'asteroid') {
         if (isCrustacean(state, piece.color) && !sq.piece) {
           const land = resolveLanding(state, piece, pos)
-          if (land) addPseudo(moves, from, pos, { finalTo: land.wormhole ? land.final : undefined })
+          if (land) addPseudo(moves, from, pos, landExtras(pos, land.final))
+        }
+        break
+      }
+
+      if (sq.hazard === 'star') {
+        if (isStarImmune(state, piece.color) && (!sq.piece || sq.piece.color !== piece.color)) {
+          const land = resolveLanding(state, piece, pos)
+          if (land) addPseudo(moves, from, pos, landExtras(pos, land.final, !!sq.piece))
         }
         break
       }
 
       if (sq.hazard === 'blackhole') {
         if (isBlob(state, piece.color)) {
-          addPseudo(moves, from, pos)
+          const land = resolveLanding(state, piece, pos)
+          if (land) {
+            const captured = !!getSquare(state, land.final).piece
+            addPseudo(moves, from, pos, landExtras(pos, land.final, captured))
+          }
         }
         break
       }
@@ -177,48 +206,33 @@ function generateSlideMoves(
       if (sq.hazard === 'wormhole') {
         const land = resolveLanding(state, piece, pos)
         if (land) {
-          addPseudo(moves, from, pos, {
-            finalTo: land.final,
-            capture: !!getSquare(state, land.final).piece,
-          })
+          const captured = !!getSquare(state, land.final).piece
+          addPseudo(moves, from, pos, landExtras(pos, land.final, captured))
         }
         break
       }
 
       if (sq.hazard === 'planet') {
-        // Gravity well: must stop on the planet square.
-        if (!sq.piece || sq.piece.color !== piece.color) {
-          const land = resolveLanding(state, piece, pos)
-          if (land) {
-            addPseudo(moves, from, pos, {
-              finalTo: land.wormhole ? land.final : undefined,
-              capture: !!sq.piece,
-            })
-          }
-        }
-        break
+        if (sq.piece?.color === piece.color) break
+        const land = resolveLanding(state, piece, pos)
+        if (land) addPseudo(moves, from, pos, landExtras(pos, land.final, !!sq.piece))
+        if (sq.piece || !glidesPlanets) break
+        r += dr
+        c += dc
+        continue
       }
 
       if (sq.piece) {
         if (sq.piece.color !== piece.color) {
           const land = resolveLanding(state, piece, pos)
-          if (land) {
-            addPseudo(moves, from, pos, {
-              finalTo: land.wormhole ? land.final : undefined,
-              capture: true,
-            })
-          }
+          if (land) addPseudo(moves, from, pos, landExtras(pos, land.final, true))
         }
         break
       }
 
       const land = resolveLanding(state, piece, pos)
-      if (land) {
-        addPseudo(moves, from, pos, {
-          finalTo: land.wormhole ? land.final : undefined,
-        })
-      }
-
+      if (!land) break
+      addPseudo(moves, from, pos, landExtras(pos, land.final))
       r += dr
       c += dc
     }
@@ -240,10 +254,11 @@ function generateLeapMoves(
     const land = resolveLanding(state, piece, pos)
     if (!land) continue
     const destPiece = getSquare(state, land.final).piece
-    addPseudo(moves, from, pos, {
-      finalTo: land.wormhole ? land.final : undefined,
-      capture: !!(destPiece && destPiece.color !== piece.color) || !!getSquare(state, pos).piece,
-    })
+    const onTarget = getSquare(state, pos).piece
+    const capture =
+      !!(destPiece && destPiece.color !== piece.color) ||
+      !!(onTarget && onTarget.color !== piece.color)
+    addPseudo(moves, from, pos, landExtras(pos, land.final, capture))
   }
   return moves
 }
@@ -263,20 +278,16 @@ function generateKingMoves(state: GameState, from: Pos, piece: Piece): Move[] {
     [0, -1],
     [-1, -1],
   ]
-  const moves = generateLeapMoves(state, from, piece, deltas).filter((m) => {
-    const final = m.finalTo ?? m.to
-    const enemyKing = findKing(state, opponent(piece.color))
-    if (enemyKing && kingsAdjacent(final, enemyKing)) return false
-    return true
+  const enemyKings = findKings(state, opponent(piece.color))
+  const moves = generateLeapMoves(state, from, piece, deltas).filter((move) => {
+    const final = move.finalTo ?? move.to
+    return !enemyKings.some((king) => kingsAdjacent(final, king))
   })
 
-  // Castling — king starts at col 8 (PIECE_START_COL + 4 = 8).
   if (!piece.moved) {
     const back = piece.color === 'white' ? WHITE_BACK : BLACK_BACK
-    if (from.row === back && from.col === PIECE_START_COL + 4) {
-      // Kingside: rook at col 11, king → 10, rook → 9
+    if (from.row === back) {
       tryCastle(state, piece, from, moves, 'king')
-      // Queenside: rook at col 4, king → 6, rook → 7
       tryCastle(state, piece, from, moves, 'queen')
     }
   }
@@ -291,31 +302,33 @@ function tryCastle(
   moves: Move[],
   side: 'king' | 'queen',
 ): void {
+  const half = from.col < 8 ? 0 : 8
+  if (from.col < half || from.col > half + 7) return
+
   const back = from.row
-  const rookCol = side === 'king' ? PIECE_START_COL + 7 : PIECE_START_COL
+  const rookCol = side === 'king' ? half + 7 : half
   const kingToCol = side === 'king' ? from.col + 2 : from.col - 2
-  const between =
-    side === 'king'
-      ? [from.col + 1, from.col + 2]
-      : [from.col - 1, from.col - 2, from.col - 3]
+  if (kingToCol < half || kingToCol > half + 7) return
 
   const rookSq = getSquare(state, { row: back, col: rookCol })
   if (!rookSq.piece || rookSq.piece.type !== 'rook' || rookSq.piece.moved) return
   if (rookSq.piece.color !== piece.color) return
 
-  for (const c of between) {
-    const sq = getSquare(state, { row: back, col: c })
-    if (sq.piece || sq.hazard === 'asteroid' || sq.hazard === 'blackhole') return
+  const lo = Math.min(from.col, rookCol) + 1
+  const hi = Math.max(from.col, rookCol) - 1
+  for (let col = lo; col <= hi; col++) {
+    const sq = getSquare(state, { row: back, col })
+    if (sq.piece || sq.hazard) return
+    if (!isBlob(state, piece.color) && isNearBlackHole(state, { row: back, col })) return
   }
 
-  // Cannot castle out of, through, or into check.
   if (isSquareAttacked(state, from, opponent(piece.color))) return
-  for (const c of side === 'king' ? [from.col + 1, kingToCol] : [from.col - 1, kingToCol]) {
+  const passed = side === 'king' ? [from.col + 1, kingToCol] : [from.col - 1, kingToCol]
+  for (const col of passed) {
     const probe = cloneState(state)
-    // Simulate king stepping
     probe.board[back][from.col].piece = null
-    probe.board[back][c].piece = { ...piece, moved: true }
-    if (isSquareAttacked(probe, { row: back, col: c }, opponent(piece.color))) return
+    probe.board[back][col].piece = { ...piece, moved: true }
+    if (isSquareAttacked(probe, { row: back, col }, opponent(piece.color))) return
   }
 
   addPseudo(moves, from, { row: back, col: kingToCol })
@@ -370,23 +383,16 @@ export function generatePseudoMoves(state: GameState, from: Pos): Move[] {
 }
 
 /** Attacks ignoring civ suicide rules (for check detection). */
-export function isSquareAttacked(
-  state: GameState,
-  target: Pos,
-  byColor: Color,
-): boolean {
-  // Pawns
+export function isSquareAttacked(state: GameState, target: Pos, byColor: Color): boolean {
   const dir = pawnDir(byColor)
   for (const dc of [-1, 1]) {
     const r = target.row - dir
     const c = target.col + dc
-    if (inBounds(r, c)) {
-      const p = state.board[r][c].piece
-      if (p && p.color === byColor && p.type === 'pawn') return true
-    }
+    if (!inBounds(r, c)) continue
+    const piece = state.board[r][c].piece
+    if (piece && piece.color === byColor && piece.type === 'pawn') return true
   }
 
-  // Knights
   for (const [dr, dc] of [
     [-2, 1],
     [-1, 2],
@@ -400,23 +406,21 @@ export function isSquareAttacked(
     const r = target.row + dr
     const c = target.col + dc
     if (!inBounds(r, c)) continue
-    const p = state.board[r][c].piece
-    if (p && p.color === byColor && p.type === 'knight') return true
+    const piece = state.board[r][c].piece
+    if (piece && piece.color === byColor && piece.type === 'knight') return true
   }
 
-  // King
   for (let dr = -1; dr <= 1; dr++) {
     for (let dc = -1; dc <= 1; dc++) {
       if (dr === 0 && dc === 0) continue
       const r = target.row + dr
       const c = target.col + dc
       if (!inBounds(r, c)) continue
-      const p = state.board[r][c].piece
-      if (p && p.color === byColor && p.type === 'king') return true
+      const piece = state.board[r][c].piece
+      if (piece && piece.color === byColor && piece.type === 'king') return true
     }
   }
 
-  // Sliders
   const rays: { dirs: [number, number][]; types: PieceType[] }[] = [
     {
       dirs: [
@@ -444,17 +448,18 @@ export function isSquareAttacked(
       let c = target.col + dc
       while (inBounds(r, c)) {
         const sq = state.board[r][c]
-        if (sq.hazard === 'asteroid') break
+        if (sq.hazard === 'asteroid' || sq.hazard === 'star') break
         if (sq.piece) {
-          if (sq.piece.color === byColor && types.includes(sq.piece.type)) {
-            return true
-          }
+          if (sq.piece.color === byColor && types.includes(sq.piece.type)) return true
           break
         }
-        // Planets / wormholes / BH stop sliding attacks beyond them
-        if (sq.hazard === 'planet' || sq.hazard === 'wormhole' || sq.hazard === 'blackhole') {
-          break
+        if (sq.hazard === 'planet') {
+          if (!isSilicate(state, byColor)) break
+          r += dr
+          c += dc
+          continue
         }
+        if (sq.hazard === 'wormhole' || sq.hazard === 'blackhole') break
         r += dr
         c += dc
       }
@@ -465,16 +470,27 @@ export function isSquareAttacked(
 }
 
 export function isInCheck(state: GameState, color: Color): boolean {
-  const king = findKing(state, color)
-  if (!king) return true // missing king counts as check/loss
-  return isSquareAttacked(state, king, opponent(color))
+  const kings = findKings(state, color)
+  if (kings.length < 2) return true
+  return kings.some((king) => isSquareAttacked(state, king, opponent(color)))
+}
+
+function removeAsteroid(state: GameState, pos: Pos): void {
+  state.space.asteroids = state.space.asteroids.filter((body) => !samePos(body.pos, pos))
+  paintSpace(state)
+}
+
+function moveAsteroid(state: GameState, from: Pos, to: Pos): void {
+  const body = state.space.asteroids.find((asteroid) => samePos(asteroid.pos, from))
+  if (body) body.pos = to
+  paintSpace(state)
 }
 
 function pushAsteroid(
   state: GameState,
   from: Pos,
   color: Color,
-): { to: Pos | null; destroyedEnemy?: Pos } {
+): { to: Pos | null; destroyedEnemy?: Pos; shattered?: boolean; destroyedType?: PieceType } {
   const dir = color === 'white' ? -1 : 1
   let lastSafe: Pos | null = null
 
@@ -482,44 +498,44 @@ function pushAsteroid(
     const row = from.row + dir * step
     const col = from.col
     if (!inBounds(row, col)) {
-      // Flies off the board
-      state.board[from.row][from.col].hazard = null
+      removeAsteroid(state, from)
       return { to: null }
     }
-    const sq = state.board[row][col]
-    if (sq.hazard) {
-      // Stop before obstacle
+    const target = state.board[row][col]
+    if (target.hazard) {
       if (lastSafe) {
-        state.board[from.row][from.col].hazard = null
-        state.board[lastSafe.row][lastSafe.col].hazard = 'asteroid'
+        moveAsteroid(state, from, lastSafe)
         return { to: lastSafe }
       }
       return { to: from }
     }
-    if (sq.piece) {
-      const destroyed =
-        sq.piece.color !== color ? { row, col } : undefined
-      if (destroyed) sq.piece = null
-      state.board[from.row][from.col].hazard = null
-      return { to: null, destroyedEnemy: destroyed }
+    if (target.piece) {
+      if (isSilicate(state, target.piece.color)) {
+        removeAsteroid(state, from)
+        return { to: null, shattered: true }
+      }
+      const destroyed = target.piece.color !== color ? { row, col } : undefined
+      const destroyedType = destroyed ? target.piece.type : undefined
+      if (destroyed) target.piece = null
+      removeAsteroid(state, from)
+      return { to: null, destroyedEnemy: destroyed, destroyedType }
     }
     lastSafe = { row, col }
   }
 
   if (lastSafe) {
-    state.board[from.row][from.col].hazard = null
-    state.board[lastSafe.row][lastSafe.col].hazard = 'asteroid'
+    moveAsteroid(state, from, lastSafe)
     return { to: lastSafe }
   }
   return { to: from }
 }
 
 function colonizePlanet(state: GameState, pos: Pos, color: Color): Pos[] {
-  const sq = getSquare(state, pos)
-  if (sq.hazard !== 'planet') return []
-  const previous = sq.planetOwner
-  sq.planetOwner = color
-  // Spawn only when ownership changes (or first claim).
+  const body = state.space.planets.find((planet) => samePos(planet.pos, pos))
+  if (!body && getSquare(state, pos).hazard !== 'planet') return []
+  const previous = body?.owner ?? getSquare(state, pos).planetOwner
+  if (body) body.owner = color
+  paintSpace(state)
   if (previous === color) return []
 
   const empties = adjacentEmpty(state, pos)
@@ -529,70 +545,110 @@ function colonizePlanet(state: GameState, pos: Pos, color: Color): Pos[] {
   )
   const spawned: Pos[] = []
   for (let i = 0; i < count; i++) {
-    const p = empties[i]
-    state.board[p.row][p.col].piece = {
-      type: 'pawn',
-      color,
-      moved: false,
-    }
-    spawned.push(p)
+    const spot = empties[i]
+    state.board[spot.row][spot.col].piece = { type: 'pawn', color, moved: false }
+    spawned.push(spot)
   }
   return spawned
 }
 
-/** Apply a legal move; mutates a clone and returns it. */
+function solarFlare(state: GameState, landing: Pos, color: Color): { from: Pos; to: Pos }[] {
+  if (!isSolarite(state, color)) return []
+  const pushes: { from: Pos; to: Pos }[] = []
+  const ortho: [number, number][] = [
+    [-1, 0],
+    [1, 0],
+    [0, -1],
+    [0, 1],
+  ]
+
+  for (const star of state.space.stars) {
+    const near =
+      Math.max(Math.abs(star.pos.row - landing.row), Math.abs(star.pos.col - landing.col)) <= 1
+    if (!near) continue
+    for (const [dr, dc] of ortho) {
+      const from = { row: star.pos.row + dr, col: star.pos.col + dc }
+      const to = { row: star.pos.row + dr * 2, col: star.pos.col + dc * 2 }
+      if (!inBounds(from.row, from.col) || !inBounds(to.row, to.col)) continue
+      if (samePos(from, landing)) continue
+      const victim = state.board[from.row][from.col].piece
+      if (!victim || victim.color === color) continue
+      const dest = state.board[to.row][to.col]
+      if (dest.piece || dest.hazard) continue
+      dest.piece = victim
+      state.board[from.row][from.col].piece = null
+      pushes.push({ from, to })
+    }
+  }
+  return pushes
+}
+
+/** Apply a legal move. Mutates a clone and returns it. */
 export function applyMove(state: GameState, move: Move): GameState {
   const next = cloneState(state)
   const piece = getSquare(next, move.from).piece
   if (!piece) return next
 
-  const promo = move.promotion ?? (piece.type === 'pawn' &&
-    ((move.finalTo ?? move.to).row === 0 || (move.finalTo ?? move.to).row === BOARD_SIZE - 1)
-    ? 'queen'
-    : undefined)
+  const hintedFinal = move.finalTo ?? move.to
+  const promo =
+    move.promotion ??
+    (piece.type === 'pawn' && (hintedFinal.row === 0 || hintedFinal.row === BOARD_SIZE - 1)
+      ? 'queen'
+      : undefined)
 
   let landing = move.to
   let capture = false
+  let captured: PieceType | undefined
   let asteroidPush: Move['asteroidPush']
   let spawnedPawns: Pos[] | undefined
   let colonizedPlanet: Pos | undefined
 
-  // En passant capture
   if (
     piece.type === 'pawn' &&
     next.enPassant &&
     samePos(move.to, next.enPassant) &&
     !getSquare(next, move.to).piece
   ) {
-    const capRow = move.from.row
-    next.board[capRow][move.to.col].piece = null
+    next.board[move.from.row][move.to.col].piece = null
     capture = true
+    captured = 'pawn'
   }
 
-  // Clear origin
   next.board[move.from.row][move.from.col].piece = null
 
-  // Crustacean asteroid shove
-  if (
-    getSquare(next, move.to).hazard === 'asteroid' &&
-    isCrustacean(next, piece.color)
-  ) {
+  if (getSquare(next, move.to).hazard === 'asteroid' && isCrustacean(next, piece.color)) {
     const pushed = pushAsteroid(next, move.to, piece.color)
     asteroidPush = { from: move.to, ...pushed }
-    if (pushed.destroyedEnemy) capture = true
+    if (pushed.destroyedEnemy) {
+      capture = true
+      captured = pushed.destroyedType
+    }
   }
 
-  // Wormhole teleport
   if (getSquare(next, move.to).hazard === 'wormhole') {
     const exit = findWormholeExit(next, move.to)
     if (exit) {
-      if (getSquare(next, exit).piece) {
+      const victim = getSquare(next, exit).piece
+      if (victim) {
         capture = true
+        captured = victim.type
+        next.board[exit.row][exit.col].piece = null
+      }
+      landing = exit
+    }
+  } else if (getSquare(next, move.to).hazard === 'blackhole' && isBlob(next, piece.color)) {
+    const exit = otherBlackHole(next, move.to)
+    if (exit) {
+      const victim = getSquare(next, exit).piece
+      if (victim) {
+        capture = true
+        captured = victim.type
         next.board[exit.row][exit.col].piece = null
       }
       landing = exit
     }
   } else if (getSquare(next, move.to).piece) {
+    captured = getSquare(next, move.to).piece?.type
     capture = true
   }
 
@@ -603,32 +659,24 @@ export function applyMove(state: GameState, move: Move): GameState {
   }
   next.board[landing.row][landing.col].piece = movedPiece
 
-  // Castling rook move
   if (piece.type === 'king' && Math.abs(move.to.col - move.from.col) === 2) {
     const back = move.from.row
-    if (move.to.col > move.from.col) {
-      // kingside
-      const rookFrom = PIECE_START_COL + 7
-      const rookTo = move.to.col - 1
-      const rook = next.board[back][rookFrom].piece
-      next.board[back][rookFrom].piece = null
-      if (rook) next.board[back][rookTo].piece = { ...rook, moved: true }
-    } else {
-      const rookFrom = PIECE_START_COL
-      const rookTo = move.to.col + 1
-      const rook = next.board[back][rookFrom].piece
-      next.board[back][rookFrom].piece = null
-      if (rook) next.board[back][rookTo].piece = { ...rook, moved: true }
-    }
+    const half = move.from.col < 8 ? 0 : 8
+    const kingside = move.to.col > move.from.col
+    const rookFrom = kingside ? half + 7 : half
+    const rookTo = kingside ? move.to.col - 1 : move.to.col + 1
+    const rook = next.board[back][rookFrom].piece
+    next.board[back][rookFrom].piece = null
+    if (rook) next.board[back][rookTo].piece = { ...rook, moved: true }
   }
 
-  // Planet colonization
   if (getSquare(next, landing).hazard === 'planet') {
     spawnedPawns = colonizePlanet(next, landing, piece.color)
     colonizedPlanet = landing
   }
 
-  // En passant target
+  const solarPush = solarFlare(next, landing, piece.color)
+
   next.enPassant = null
   if (piece.type === 'pawn' && Math.abs(move.to.row - move.from.row) === 2) {
     next.enPassant = {
@@ -637,21 +685,34 @@ export function applyMove(state: GameState, move: Move): GameState {
     }
   }
 
+  let hazardDeaths: Pos[] | undefined
+  if (piece.color === 'black') {
+    const deaths = advanceHazards(next)
+    if (deaths.length) hazardDeaths = deaths
+    next.moveNumber += 1
+  }
+
   const annotated: Move = {
     ...move,
     finalTo: landing,
     capture: capture || !!move.capture,
+    captured,
     promotion: promo,
     asteroidPush,
     spawnedPawns,
     colonizedPlanet,
+    solarPush: solarPush.length ? solarPush : undefined,
+    hazardDeaths,
   }
 
   next.lastMove = annotated
-  next.halfmoveClock = piece.type === 'pawn' || capture ? 0 : next.halfmoveClock + 1
-  if (piece.color === 'black') next.moveNumber += 1
+  const noisy =
+    piece.type === 'pawn' ||
+    capture ||
+    !!hazardDeaths?.length ||
+    solarPush.length > 0
+  next.halfmoveClock = noisy ? 0 : next.halfmoveClock + 1
   next.turn = opponent(piece.color)
-
   return next
 }
 
@@ -662,8 +723,8 @@ export function generateLegalMoves(state: GameState, from?: Pos): Move[] {
   } else {
     for (let row = 0; row < BOARD_SIZE; row++) {
       for (let col = 0; col < BOARD_SIZE; col++) {
-        const p = state.board[row][col].piece
-        if (p && p.color === state.turn) origins.push({ row, col })
+        const piece = state.board[row][col].piece
+        if (piece && piece.color === state.turn) origins.push({ row, col })
       }
     }
   }
@@ -673,7 +734,6 @@ export function generateLegalMoves(state: GameState, from?: Pos): Move[] {
     const piece = getSquare(state, origin).piece
     if (!piece) continue
     for (const move of generatePseudoMoves(state, origin)) {
-      // Expand promotions
       const variants: Move[] =
         move.promotion && piece.type === 'pawn'
           ? (['queen', 'rook', 'bishop', 'knight'] as PieceType[]).map((promotion) => ({
@@ -684,11 +744,8 @@ export function generateLegalMoves(state: GameState, from?: Pos): Move[] {
 
       for (const variant of variants) {
         const next = applyMove(state, variant)
-        // Moving side must not leave their king in check
-        if (!isInCheck(next, piece.color)) {
-          // Also: if own king vanished (shouldn't), illegal
-          if (findKing(next, piece.color)) legal.push(variant)
-        }
+        if (countKings(next, piece.color) < 2) continue
+        if (!isInCheck(next, piece.color)) legal.push(variant)
       }
     }
   }
@@ -697,22 +754,33 @@ export function generateLegalMoves(state: GameState, from?: Pos): Move[] {
 
 export function updateStatus(state: GameState): GameState {
   const next = cloneState(state)
-  const key = (() => {
-    // reuse board positionKey via dynamic import avoidance — inline light key
-    return `${next.turn}:${next.moveNumber}:${JSON.stringify(
-      next.board.map((row) =>
-        row.map((sq) =>
-          sq.piece
-            ? `${sq.piece.color[0]}${sq.piece.type[0]}`
-            : sq.hazard
-              ? sq.hazard[0]
-              : '.',
-        ),
+  const key = `${next.turn}:${next.moveNumber}:${JSON.stringify(
+    next.board.map((row) =>
+      row.map((sq) =>
+        sq.piece ? `${sq.piece.color[0]}${sq.piece.type[0]}` : sq.hazard ? sq.hazard[0] : '.',
       ),
-    )}`
-  })()
+    ),
+  )}:${next.space.planets.map((planet) => planet.owner ?? '-').join('')}`
   next.positionHistory.push(key)
-  const repeats = next.positionHistory.filter((k) => k === key).length
+  const repeats = next.positionHistory.filter((entry) => entry === key).length
+
+  const whiteKings = countKings(next, 'white')
+  const blackKings = countKings(next, 'black')
+  if (whiteKings < 2 && blackKings < 2) {
+    next.status = 'draw'
+    next.winner = null
+    return next
+  }
+  if (whiteKings < 2) {
+    next.status = 'checkmate'
+    next.winner = 'black'
+    return next
+  }
+  if (blackKings < 2) {
+    next.status = 'checkmate'
+    next.winner = 'white'
+    return next
+  }
 
   const legal = generateLegalMoves(next)
   const inCheck = isInCheck(next, next.turn)
@@ -734,17 +802,16 @@ export function updateStatus(state: GameState): GameState {
     return next
   }
 
-  // Insufficient material: only kings (ignore hazards)
-  let pieces = 0
+  let nonKing = 0
   let minor = 0
   for (const row of next.board) {
     for (const sq of row) {
       if (!sq.piece) continue
-      pieces++
+      if (sq.piece.type !== 'king') nonKing++
       if (sq.piece.type === 'knight' || sq.piece.type === 'bishop') minor++
     }
   }
-  if (pieces === 2 || (pieces === 3 && minor === 1)) {
+  if (nonKing === 0 || (nonKing === 1 && minor === 1)) {
     next.status = 'draw'
     next.winner = null
     return next
@@ -756,11 +823,7 @@ export function updateStatus(state: GameState): GameState {
 }
 
 export function movesEqual(a: Move, b: Move): boolean {
-  return (
-    samePos(a.from, b.from) &&
-    samePos(a.to, b.to) &&
-    a.promotion === b.promotion
-  )
+  return samePos(a.from, b.from) && samePos(a.to, b.to) && a.promotion === b.promotion
 }
 
 export function findMove(
@@ -770,9 +833,9 @@ export function findMove(
   promotion?: PieceType,
 ): Move | undefined {
   return legal.find(
-    (m) =>
-      samePos(m.from, from) &&
-      samePos(m.to, to) &&
-      (promotion ? m.promotion === promotion : true),
+    (move) =>
+      samePos(move.from, from) &&
+      samePos(move.to, to) &&
+      (promotion ? move.promotion === promotion : true),
   )
 }

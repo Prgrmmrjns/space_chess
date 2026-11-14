@@ -16,11 +16,11 @@ const DIFFICULTY_DEPTH: Record<Difficulty, number> = {
   hard: 3,
 }
 
-/** Soft node budget so Hard stays responsive on 16×16. */
+/** Budgets stay tight: a full-width fleet has about twice as many ships. */
 const DIFFICULTY_NODES: Record<Difficulty, number> = {
-  easy: 2_000,
-  medium: 12_000,
-  hard: 40_000,
+  easy: 600,
+  medium: 3_500,
+  hard: 10_000,
 }
 
 function orderMoves(_state: GameState, moves: Move[]): Move[] {

@@ -1,4 +1,5 @@
-import { CIV_ABILITIES, CIV_LABELS } from '../engine/constants'
+import { CIV_ABILITIES, CIV_LABELS, DIFFICULTY_BLURB } from '../engine/constants'
+import { CivPortrait } from './CivPortrait'
 import type {
   Civilization,
   Color,
@@ -11,6 +12,8 @@ interface Props {
   value: GameConfig
   onChange: (next: GameConfig) => void
   onStart: () => void
+  onOnline?: () => void
+  onLeaderboard?: () => void
 }
 
 const MODES: { id: GameMode; label: string; blurb: string }[] = [
@@ -19,9 +22,9 @@ const MODES: { id: GameMode; label: string; blurb: string }[] = [
   { id: 'aivai', label: 'AI vs AI', blurb: 'Watch two fleets spar' },
 ]
 
-const CIVS: Civilization[] = ['reptiloid', 'crustacean', 'blob']
+const CIVS: Civilization[] = ['reptiloid', 'crustacean', 'blob', 'solarite', 'silicate']
 
-export function SetupScreen({ value, onChange, onStart }: Props) {
+export function SetupScreen({ value, onChange, onStart, onOnline, onLeaderboard }: Props) {
   function set<K extends keyof GameConfig>(key: K, v: GameConfig[K]) {
     onChange({ ...value, [key]: v })
   }
@@ -32,9 +35,14 @@ export function SetupScreen({ value, onChange, onStart }: Props) {
         <p className="brand">Space Chess</p>
         <h1>Claim the void between the stars.</h1>
         <p className="lede">
-          A 16×16 chess war across asteroids, planets, wormholes, and black holes —
-          each civilisation brings one lethal specialty.
+          A 16×16 fleet war. Two flagships a side, five civilisations, and a sky that
+          moves: asteroids drift, planets orbit, stars burn what they touch.
         </p>
+        <ol className="howto">
+          <li>Choose a mode, a colour, and a civilisation.</li>
+          <li>Select a ship, then a highlighted square.</li>
+          <li>Protect both flagships. Claim planets. Do not sit on a star.</li>
+        </ol>
       </div>
 
       <div className="setup-panels">
@@ -84,7 +92,8 @@ export function SetupScreen({ value, onChange, onStart }: Props) {
                   className={value.difficulty === d ? 'chip active' : 'chip'}
                   onClick={() => set('difficulty', d)}
                 >
-                  {d[0].toUpperCase() + d.slice(1)}
+                  <strong>{d[0].toUpperCase() + d.slice(1)}</strong>
+                  <span>{DIFFICULTY_BLURB[d]}</span>
                 </button>
               ))}
             </div>
@@ -125,9 +134,23 @@ export function SetupScreen({ value, onChange, onStart }: Props) {
         </fieldset>
       </div>
 
-      <button type="button" className="cta" onClick={onStart}>
-        Launch match
-      </button>
+      <div className="setup-actions">
+        <button type="button" className="cta" onClick={onStart}>
+          Launch match
+        </button>
+        {onOnline && (
+          <button type="button" className="chip" onClick={onOnline}>
+            <strong>Rated match</strong>
+            <span>Sign in and play a stranger</span>
+          </button>
+        )}
+        {onLeaderboard && (
+          <button type="button" className="chip" onClick={onLeaderboard}>
+            <strong>Leaderboard</strong>
+            <span>Elo, starting at 1200</span>
+          </button>
+        )}
+      </div>
     </section>
   )
 }
@@ -148,6 +171,7 @@ function CivPicker({
           className={selected === civ ? `civ-card active civ-${civ}` : `civ-card civ-${civ}`}
           onClick={() => onSelect(civ)}
         >
+          <CivPortrait civ={civ} />
           <strong>{CIV_LABELS[civ]}</strong>
           <span>{CIV_ABILITIES[civ]}</span>
         </button>

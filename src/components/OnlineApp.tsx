@@ -3,6 +3,7 @@ import { CIV_ABILITIES, CIV_LABELS, FLEET_NAMES } from '../engine/constants'
 import { getLegalMoves, statusLabel } from '../engine/game'
 import type { Civilization, Color, Move, PieceType, Pos } from '../engine/types'
 import {
+  acceptResult,
   callMatch,
   claimOwnRating,
   loadLobby,
@@ -15,6 +16,7 @@ import {
   watchMatch,
 } from '../online/client'
 import type { MatchRow } from '../online/server'
+import { opponentFinishIsAcceptable } from '../online/witness'
 import { Board } from './Board'
 import { ShipKey } from './ShipKey'
 import { CivPortrait } from './CivPortrait'
@@ -59,6 +61,7 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   const [confirmResign, setConfirmResign] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const heard = useRef<string | null>(null)
+  const trusted = useRef<MatchRow | null>(null)
 
   useEffect(() => {
     return watchAuth((id) => {
@@ -84,6 +87,8 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   useEffect(() => {
     if (!matchId) return
     return watchMatch(matchId, (next) => {
+      const prev = trusted.current
+      trusted.current = next
       setMatch(next)
       setSelected(null)
       setPromo(null)
@@ -91,11 +96,18 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
       const repeat = heard.current === next.updated_at
       const opened = heard.current === null
       heard.current = next.updated_at
-      if (next.status === 'done') void claimOwnRating(next.id).catch(() => undefined)
+      const mine = userId && next.white_id === userId ? 'white' : userId && next.black_id === userId ? 'black' : null
+      if (prev && mine && opponentFinishIsAcceptable(prev, next, mine)) {
+        void acceptResult(next.id)
+          .then(() => claimOwnRating(next.id))
+          .catch(() => undefined)
+      } else if (next.status === 'done') {
+        void claimOwnRating(next.id).catch(() => undefined)
+      }
       if (!move || repeat || opened) return
       playEffect(move.capture || move.hazardDeaths?.length ? 'capture' : 'move')
     })
-  }, [matchId, playEffect])
+  }, [matchId, playEffect, userId])
 
   async function refreshLobby() {
     if (!userId) return
@@ -129,6 +141,7 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
       playEffect(move.capture || move.hazardDeaths?.length ? 'capture' : 'move')
     }
     heard.current = next.updated_at
+    trusted.current = next
     if (next.status === 'done') void claimOwnRating(next.id).catch(() => undefined)
     setMatch(next)
     setSelected(null)
@@ -565,7 +578,20 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
                         : 'Draw. Both ratings move toward each other.'}
                     </p>
                   )}
-                  <p className="hint">Both flagships must stay safe. The server rejects an illegal order.</p>
+                  {match.status === 'done' &&
+                    myColor &&
+                    !(myColor === 'white' ? match.white_accept : match.black_accept) && (
+                      <p>
+                        Both pilots have to accept this result before either rating changes.
+                        <button
+                          type="button"
+                          onClick={() => void acceptResult(match.id).then(() => claimOwnRating(match.id))}
+                        >
+                          Accept result
+                        </button>
+                      </p>
+                    )}
+                  <p className="hint">Both flagships must stay safe. An unconfirmed result does not change ratings.</p>
                 </div>
               </aside>
             </div>

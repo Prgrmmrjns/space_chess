@@ -111,7 +111,7 @@ export async function claimOwnRating(matchId: string): Promise<void> {
   const snap = await getDoc(doc(db, 'matches', matchId))
   if (!snap.exists()) return
   const match = snap.data()
-  if (match.status !== 'done') return
+  if (match.status !== 'done' || match.white_accept !== true || match.black_accept !== true) return
   const award = match.white_id === uid ? match.white_elo : match.black_id === uid ? match.black_elo : null
   if (typeof award !== 'number') return
   const profileRef = doc(db, 'profiles', uid)
@@ -121,6 +121,28 @@ export async function claimOwnRating(matchId: string): Promise<void> {
   if (data.lastMatch === matchId) return
   if (Math.abs(award - Number(data.elo)) > 32) return
   await updateDoc(profileRef, { elo: award, games: Number(data.games) + 1, lastMatch: matchId })
+}
+
+/** Record that this pilot stands behind a finished result. Only their own flag can change. */
+export async function acceptResult(matchId: string): Promise<void> {
+  const uid = auth.currentUser?.uid
+  if (!uid) return
+  const ref = doc(db, 'matches', matchId)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists()) return
+    const match = snap.data()
+    if (match.status !== 'done') return
+    if (match.white_id === uid) {
+      if (match.white_accept === true) return
+      tx.update(ref, { white_accept: true })
+      return
+    }
+    if (match.black_id === uid) {
+      if (match.black_accept === true) return
+      tx.update(ref, { black_accept: true })
+    }
+  })
 }
 
 export function watchMatch(id: string, onMatch: (match: MatchRow) => void): () => void {
@@ -145,7 +167,7 @@ function firestoreDb(): MatchDb {
   return {
     async insertMatch(row) {
       const ref = doc(collection(db, 'matches'))
-      const stored = clean({ ...row, id: ref.id })
+      const stored = clean({ ...row, id: ref.id, white_accept: false, black_accept: false })
       await setDoc(ref, stored)
       return stored
     },
@@ -165,7 +187,7 @@ function firestoreDb(): MatchDb {
         const current = await tx.get(ref)
         if (!current.exists() || current.data().updated_at !== expectedUpdatedAt) return null
         const awards = await finishAwards(tx, next)
-        const stored = { ...clean(next), ...awards }
+        const stored = { ...clean(next), ...awards, ...acceptFlags(next) }
         tx.set(ref, stored)
         return clean(next)
       })
@@ -187,7 +209,7 @@ function firestoreDb(): MatchDb {
       if (!snap.exists()) return
       const data = snap.data()
       const award = data.white_id === id ? data.white_elo : data.black_elo
-      if (typeof award !== 'number') return
+      if (typeof award !== 'number' || data.white_accept !== true || data.black_accept !== true) return
       await updateDoc(doc(db, 'profiles', id), { elo: award, games, lastMatch: ratedMatchId })
     },
   }
@@ -207,6 +229,15 @@ async function finishAwards(
   return {
     white_elo: nextElo(whiteElo, blackElo, whiteScore),
     black_elo: nextElo(blackElo, whiteElo, 1 - whiteScore),
+  }
+}
+
+function acceptFlags(next: MatchRow): { white_accept: boolean; black_accept: boolean } {
+  if (next.status !== 'done') return { white_accept: false, black_accept: false }
+  const uid = auth.currentUser?.uid
+  return {
+    white_accept: uid === next.white_id,
+    black_accept: uid === next.black_id,
   }
 }
 

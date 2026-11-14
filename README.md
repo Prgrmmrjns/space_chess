@@ -111,5 +111,5 @@ legacy/            original Pygame game
 ## Known limitations
 
 - Hard still stops at its node budget on a crowded board.
-- A rating can move by at most 32 points per finished match, and only on the signed-in pilot's own profile. The board is still written by the two clients, so a seated player can submit a result; they cannot put another account in the empty seat or edit that account's rating.
+- A rating changes only after both pilots accept the result, and only on the signed-in pilot's own profile. The client accepts an opponent's finish when it is their resignation, a timeout the clock already earned, or one legal move from the position it last saw. Two pilots who both choose to accept a result can still do so; this project has no paid Cloud Functions plan to move that check onto a server.
 - A disconnect claim is a full minute with no move. Closing the tab does not by itself stop the clock.

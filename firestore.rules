@@ -25,6 +25,8 @@ service cloud.firestore {
         && row.white_id is string
         && row.black_id is string
         && row.white_id != row.black_id
+        && row.white_accept == true
+        && row.black_accept == true
         && (
           (row.white_id == uid && request.resource.data.elo == row.white_elo)
           || (row.black_id == uid && request.resource.data.elo == row.black_elo)
@@ -63,6 +65,8 @@ service cloud.firestore {
         && request.resource.data.winner == null
         && request.resource.data.white_elo == null
         && request.resource.data.black_elo == null
+        && request.resource.data.white_accept == false
+        && request.resource.data.black_accept == false
         && request.resource.data.rated == true;
       allow update: if request.auth != null
         && resource.data.status != 'done'
@@ -79,6 +83,8 @@ service cloud.firestore {
             && request.resource.data.status == 'playing'
             && request.resource.data.white_elo == null
             && request.resource.data.black_elo == null
+            && request.resource.data.white_accept == false
+            && request.resource.data.black_accept == false
           )
           || (
             resource.data.status == 'playing'
@@ -95,9 +101,13 @@ service cloud.firestore {
                 request.resource.data.status == 'playing'
                 && request.resource.data.white_elo == null
                 && request.resource.data.black_elo == null
+                && request.resource.data.white_accept == false
+                && request.resource.data.black_accept == false
               )
               || (
                 request.resource.data.status == 'done'
+                && resource.data.white_accept == false
+                && resource.data.black_accept == false
                 && (
                   request.resource.data.winner == 'white'
                   || request.resource.data.winner == 'black'
@@ -105,8 +115,48 @@ service cloud.firestore {
                 )
                 && awardNear(resource.data.white_id, request.resource.data.white_elo)
                 && awardNear(resource.data.black_id, request.resource.data.black_elo)
+                && (
+                  (
+                    request.auth.uid == resource.data.white_id
+                    && request.resource.data.white_accept == true
+                    && request.resource.data.black_accept == false
+                  )
+                  || (
+                    request.auth.uid == resource.data.black_id
+                    && request.resource.data.black_accept == true
+                    && request.resource.data.white_accept == false
+                  )
+                )
               )
             )
+          )
+        );
+      allow update: if request.auth != null
+        && resource.data.status == 'done'
+        && request.resource.data.status == 'done'
+        && request.resource.data.white_id == resource.data.white_id
+        && request.resource.data.black_id == resource.data.black_id
+        && request.resource.data.white_civ == resource.data.white_civ
+        && request.resource.data.black_civ == resource.data.black_civ
+        && request.resource.data.code == resource.data.code
+        && request.resource.data.rated == resource.data.rated
+        && request.resource.data.winner == resource.data.winner
+        && request.resource.data.white_elo == resource.data.white_elo
+        && request.resource.data.black_elo == resource.data.black_elo
+        && request.resource.data.state == resource.data.state
+        && request.resource.data.updated_at == resource.data.updated_at
+        && (
+          (
+            request.auth.uid == resource.data.white_id
+            && resource.data.white_accept == false
+            && request.resource.data.white_accept == true
+            && request.resource.data.black_accept == resource.data.black_accept
+          )
+          || (
+            request.auth.uid == resource.data.black_id
+            && resource.data.black_accept == false
+            && request.resource.data.black_accept == true
+            && request.resource.data.white_accept == resource.data.white_accept
           )
         );
       allow delete: if false;

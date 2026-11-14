@@ -23,6 +23,9 @@ export interface MatchRow {
   winner: Color | null
   rated: boolean
   updated_at: string
+  /** Set by that pilot when they stand behind a finished result. */
+  white_accept?: boolean
+  black_accept?: boolean
 }
 
 export interface MatchDb {

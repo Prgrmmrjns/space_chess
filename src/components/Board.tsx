@@ -1,6 +1,8 @@
-import { BOARD_SIZE } from '../engine/constants'
+import { useMemo } from 'react'
+import { BOARD_SIZE, FLEET_MOVES, FLEET_NAMES } from '../engine/constants'
+import { forecastSpace } from '../engine/board'
 import type { Civilization, Color, GameState, Move, Pos } from '../engine/types'
-import { samePos } from '../engine/types'
+import { posKey, samePos } from '../engine/types'
 import { HazardMark } from './HazardMark'
 import { PieceGlyph } from './PieceGlyph'
 
@@ -11,6 +13,7 @@ interface Props {
   onSelect: (pos: Pos) => void
   orientation: Color
   disabled?: boolean
+  impacts?: Pos[]
 }
 
 function fileLabel(col: number): string {
@@ -24,6 +27,7 @@ export function Board({
   onSelect,
   orientation,
   disabled,
+  impacts = [],
 }: Props) {
   const rows =
     orientation === 'white'
@@ -36,6 +40,12 @@ export function Board({
 
   const last = state.lastMove
   const finalLast = last ? (last.finalTo ?? last.to) : null
+  const forecast = useMemo(() => forecastSpace(state), [state])
+  const orbitKeys = new Set(forecast.orbits.map((pos) => posKey(pos)))
+  const ghosts = new Map<string, 'asteroid' | 'planet' | 'star'>()
+  for (const pos of forecast.nextAsteroids) ghosts.set(posKey(pos), 'asteroid')
+  for (const pos of forecast.nextPlanets) ghosts.set(posKey(pos), 'planet')
+  for (const pos of forecast.nextStars) ghosts.set(posKey(pos), 'star')
 
   return (
     <div className="board-shell" role="grid" aria-label="Space Chess board">
@@ -53,6 +63,9 @@ export function Board({
             const civ: Civilization = sq.piece
               ? state.civs[sq.piece.color]
               : state.civs.white
+            const exploding = impacts.some((impact) => samePos(impact, pos))
+            const ghost = ghosts.get(posKey(pos))
+            const onOrbit = orbitKeys.has(posKey(pos)) && !ghost
 
             return (
               <button
@@ -65,16 +78,20 @@ export function Board({
                   moveHit ? (moveHit.capture ? 'target-capture' : 'target-move') : '',
                   isLast ? 'last-move' : '',
                   sq.hazard ? `has-${sq.hazard}` : '',
+                  onOrbit ? 'orbit' : '',
+                  exploding ? 'exploding' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')}
                 onClick={() => !disabled && onSelect(pos)}
                 disabled={disabled}
                 aria-label={`${fileLabel(col)}${BOARD_SIZE - row}${
-                  sq.piece ? `, ${sq.piece.color} ${sq.piece.type}` : ''
-                }`}
+                  sq.piece ? `, ${sq.piece.color} ${FLEET_NAMES[sq.piece.type]}. ${FLEET_MOVES[sq.piece.type]}` : ''
+                }${ghost ? `, ${ghost} arrives next turn` : ''}${onOrbit ? ', on a planetary orbit' : ''}`}
               >
+                {exploding && <span className="blast" />}
                 <HazardMark square={sq} />
+                {ghost && <span className={`ghost ${ghost}`} title={`${ghost} next turn`} />}
                 {sq.piece && (
                   <span className="piece-wrap">
                     <PieceGlyph

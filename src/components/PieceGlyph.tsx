@@ -1,9 +1,12 @@
+import { useId } from 'react'
 import type { Civilization, Color, PieceType } from '../engine/types'
 
 const ACCENT: Record<Civilization, string> = {
   reptiloid: '#6fbf73',
   crustacean: '#e08a4f',
   blob: '#5ec8d8',
+  solarite: '#f0c14a',
+  silicate: '#c5ccd4',
 }
 
 interface Props {
@@ -13,93 +16,99 @@ interface Props {
 }
 
 export function PieceGlyph({ type, color, civ }: Props) {
+  const raw = useId().replace(/:/g, '')
   const fill = color === 'white' ? '#f4efe6' : '#1c2430'
   const stroke = color === 'white' ? '#2a3340' : '#d7dee8'
   const accent = ACCENT[civ]
+  const hull = `url(#hull-${raw})`
 
   return (
     <svg viewBox="0 0 64 64" className="piece-glyph" aria-hidden>
       <defs>
-        <radialGradient id={`g-${color}-${civ}`} cx="35%" cy="30%" r="70%">
-          <stop offset="0%" stopColor={color === 'white' ? '#fff' : '#3a4555'} />
+        <linearGradient id={`hull-${raw}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color === 'white' ? '#fff' : '#3d4b5e'} />
           <stop offset="100%" stopColor={fill} />
-        </radialGradient>
+        </linearGradient>
       </defs>
-      {type === 'pawn' && <Pawn fill={`url(#g-${color}-${civ})`} stroke={stroke} accent={accent} />}
-      {type === 'knight' && <Knight fill={`url(#g-${color}-${civ})`} stroke={stroke} accent={accent} />}
-      {type === 'bishop' && <Bishop fill={`url(#g-${color}-${civ})`} stroke={stroke} accent={accent} />}
-      {type === 'rook' && <Rook fill={`url(#g-${color}-${civ})`} stroke={stroke} accent={accent} />}
-      {type === 'queen' && <Queen fill={`url(#g-${color}-${civ})`} stroke={stroke} accent={accent} />}
-      {type === 'king' && <King fill={`url(#g-${color}-${civ})`} stroke={stroke} accent={accent} />}
+      {type === 'pawn' && <Fighter hull={hull} stroke={stroke} accent={accent} />}
+      {type === 'knight' && <Cruiser hull={hull} stroke={stroke} accent={accent} />}
+      {type === 'bishop' && <Frigate hull={hull} stroke={stroke} accent={accent} />}
+      {type === 'rook' && <Battleship hull={hull} stroke={stroke} accent={accent} />}
+      {type === 'queen' && <Dreadnought hull={hull} stroke={stroke} accent={accent} />}
+      {type === 'king' && <Flagship hull={hull} stroke={stroke} accent={accent} />}
     </svg>
   )
 }
 
-function Pawn({ fill, stroke, accent }: { fill: string; stroke: string; accent: string }) {
+function Fighter({ hull, stroke, accent }: Ship) {
   return (
     <g stroke={stroke} strokeWidth="2" strokeLinejoin="round">
-      <circle cx="32" cy="22" r="8" fill={fill} />
-      <path d="M20 52c2-12 8-18 12-18s10 6 12 18" fill={fill} />
-      <ellipse cx="32" cy="34" rx="10" ry="5" fill={accent} opacity="0.85" />
-      <path d="M18 54h28" stroke={accent} strokeWidth="3" />
+      <path d="M32 6 L42 28 L32 24 L22 28 Z" fill={hull} />
+      <path d="M18 34 H46 L40 52 H24 Z" fill={hull} />
+      <path d="M28 36 H36" stroke={accent} strokeWidth="3" />
+      <circle cx="32" cy="44" r="2.5" fill={accent} stroke="none" />
     </g>
   )
 }
 
-function Knight({ fill, stroke, accent }: { fill: string; stroke: string; accent: string }) {
+function Cruiser({ hull, stroke, accent }: Ship) {
   return (
     <g stroke={stroke} strokeWidth="2" strokeLinejoin="round">
-      <path
-        d="M18 52h28l-2-8c-6-2-8-8-7-16 4-2 8-8 7-14-6 2-12 2-16 8-2-4-2-8 0-12-8 6-12 14-10 24l0 18z"
-        fill={fill}
-      />
-      <circle cx="28" cy="24" r="2" fill={accent} />
-      <path d="M20 52h24" stroke={accent} strokeWidth="3" />
+      <path d="M14 22 L30 10 L34 22 L30 46 L18 46 Z" fill={hull} />
+      <path d="M34 26 H50 L46 40 H34 Z" fill={hull} />
+      <path d="M22 28 H30" stroke={accent} strokeWidth="3" />
+      <circle cx="40" cy="33" r="2" fill={accent} stroke="none" />
     </g>
   )
 }
 
-function Bishop({ fill, stroke, accent }: { fill: string; stroke: string; accent: string }) {
+function Frigate({ hull, stroke, accent }: Ship) {
   return (
     <g stroke={stroke} strokeWidth="2" strokeLinejoin="round">
-      <circle cx="32" cy="14" r="3" fill={accent} />
-      <path d="M32 18c8 8 12 16 10 28H22c-2-12 2-20 10-28z" fill={fill} />
-      <path d="M28 30l8 8" stroke={accent} strokeWidth="2" />
-      <path d="M18 52h28" stroke={accent} strokeWidth="3" />
+      <path d="M30 8 H34 L36 48 H28 Z" fill={hull} />
+      <path d="M18 30 L32 16 L32 42 Z" fill={accent} opacity="0.85" />
+      <path d="M22 50 H42 L38 56 H26 Z" fill={hull} />
     </g>
   )
 }
 
-function Rook({ fill, stroke, accent }: { fill: string; stroke: string; accent: string }) {
+function Battleship({ hull, stroke, accent }: Ship) {
   return (
     <g stroke={stroke} strokeWidth="2" strokeLinejoin="round">
-      <path d="M18 20h8v-6h4v6h4v-6h4v6h8v10H18z" fill={fill} />
-      <path d="M20 30h24v16H20z" fill={fill} />
-      <rect x="16" y="46" width="32" height="8" rx="1" fill={fill} />
-      <path d="M22 36h20" stroke={accent} strokeWidth="2" />
+      <path d="M12 26 H52 L48 48 H16 Z" fill={hull} />
+      <rect x="20" y="16" width="10" height="12" fill={hull} />
+      <rect x="34" y="16" width="10" height="12" fill={hull} />
+      <path d="M22 20 H28 M36 20 H42" stroke={accent} strokeWidth="3" />
+      <path d="M18 36 H46" stroke={accent} strokeWidth="2" />
     </g>
   )
 }
 
-function Queen({ fill, stroke, accent }: { fill: string; stroke: string; accent: string }) {
+function Dreadnought({ hull, stroke, accent }: Ship) {
   return (
     <g stroke={stroke} strokeWidth="2" strokeLinejoin="round">
-      <circle cx="16" cy="18" r="3" fill={accent} />
-      <circle cx="32" cy="12" r="3" fill={accent} />
-      <circle cx="48" cy="18" r="3" fill={accent} />
-      <path d="M16 20l6 28h20l6-28-10 12-6-16-6 16z" fill={fill} />
-      <path d="M18 52h28" stroke={accent} strokeWidth="3" />
+      <path d="M32 6 L40 18 L54 24 L46 46 L32 56 L18 46 L10 24 L24 18 Z" fill={hull} />
+      <path d="M32 16 L36 28 H28 Z" fill={accent} />
+      <circle cx="22" cy="34" r="2" fill={accent} stroke="none" />
+      <circle cx="42" cy="34" r="2" fill={accent} stroke="none" />
+      <path d="M24 44 H40" stroke={accent} strokeWidth="2" />
     </g>
   )
 }
 
-function King({ fill, stroke, accent }: { fill: string; stroke: string; accent: string }) {
+function Flagship({ hull, stroke, accent }: Ship) {
   return (
     <g stroke={stroke} strokeWidth="2" strokeLinejoin="round">
-      <path d="M32 8v10M27 13h10" stroke={accent} strokeWidth="3" />
-      <path d="M20 24h24l-4 22H24z" fill={fill} />
-      <path d="M18 52h28" stroke={accent} strokeWidth="3" />
-      <circle cx="32" cy="30" r="4" fill={accent} opacity="0.9" />
+      <path d="M16 34 H48 L44 52 H20 Z" fill={hull} />
+      <path d="M26 18 H38 L36 34 H28 Z" fill={hull} />
+      <path d="M32 6 V18 M26 12 H38" stroke={accent} strokeWidth="3" />
+      <circle cx="32" cy="42" r="4" fill={accent} stroke="none" />
     </g>
   )
+}
+
+interface Ship {
+  hull: string
+  stroke: string
+  accent: string
 }

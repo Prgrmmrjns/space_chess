@@ -1,0 +1,4 @@
+project_id = "space-chess"
+
+[functions.match]
+verify_jwt = true

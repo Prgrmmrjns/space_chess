@@ -1,0 +1,221 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function matchDoc(id) {
+      return get(/databases/$(database)/documents/matches/$(id)).data;
+    }
+
+    function profileElo(uid) {
+      return get(/databases/$(database)/documents/profiles/$(uid)).data.elo;
+    }
+
+    function awardNearBase(before, award) {
+      return before is number
+        && award is number
+        && award == math.round(award)
+        && award >= before - 32
+        && award <= before + 32;
+    }
+
+    function ownFinishedAward(uid) {
+      let row = matchDoc(request.resource.data.lastMatch);
+      return request.resource.data.lastMatch is string
+        && exists(/databases/$(database)/documents/matches/$(request.resource.data.lastMatch))
+        && row.status == 'done'
+        && row.white_id is string
+        && row.black_id is string
+        && row.white_id != row.black_id
+        && row.white_accept == true
+        && row.black_accept == true
+        && (
+          (row.white_id == uid && request.resource.data.elo == row.white_elo)
+          || (row.black_id == uid && request.resource.data.elo == row.black_elo)
+        );
+    }
+
+    match /profiles/{uid} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.elo == 1200
+        && request.resource.data.games == 0
+        && request.resource.data.username is string
+        && request.resource.data.username.matches('^[A-Za-z0-9_]{3,16}$');
+      allow update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.username == resource.data.username
+        && request.resource.data.games == resource.data.games + 1
+        && request.resource.data.elo >= resource.data.elo - 32
+        && request.resource.data.elo <= resource.data.elo + 32
+        && ownFinishedAward(uid)
+        && resource.data.get('lastMatch', '') != request.resource.data.lastMatch;
+      allow delete: if false;
+    }
+
+    match /matches/{id} {
+      allow read: if resource.data.status == 'open'
+        || (request.auth != null && (
+          request.auth.uid == resource.data.white_id
+          || request.auth.uid == resource.data.black_id
+        ));
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.white_id
+        && request.resource.data.status == 'open'
+        && request.resource.data.black_id == null
+        && request.resource.data.winner == null
+        && request.resource.data.white_elo == null
+        && request.resource.data.black_elo == null
+        && request.resource.data.white_accept == false
+        && request.resource.data.black_accept == false
+        && request.resource.data.white_before == null
+        && request.resource.data.black_before == null
+        && request.resource.data.plyCount == 0
+        && request.resource.data.server_at == request.time
+        && request.resource.data.created_at == request.time
+        && request.resource.data.rated == true;
+      allow update: if request.auth != null
+        && resource.data.status != 'done'
+        && request.resource.data.white_id == resource.data.white_id
+        && request.resource.data.white_civ == resource.data.white_civ
+        && request.resource.data.rated == resource.data.rated
+        && request.resource.data.code == resource.data.code
+        && (
+          (
+            resource.data.status == 'open'
+            && resource.data.black_id == null
+            && request.auth.uid == request.resource.data.black_id
+            && request.auth.uid != resource.data.white_id
+            && request.resource.data.status == 'playing'
+            && request.resource.data.white_elo == null
+            && request.resource.data.black_elo == null
+            && request.resource.data.white_accept == false
+            && request.resource.data.black_accept == false
+            && request.resource.data.plyCount == 0
+            && request.resource.data.server_at == request.time
+            && request.resource.data.created_at == resource.data.created_at
+            && request.resource.data.white_before == profileElo(resource.data.white_id)
+            && request.resource.data.black_before == profileElo(request.auth.uid)
+          )
+          || (
+            resource.data.status == 'playing'
+            && resource.data.black_id is string
+            && resource.data.black_id != resource.data.white_id
+            && request.resource.data.black_id == resource.data.black_id
+            && request.resource.data.black_civ == resource.data.black_civ
+            && (
+              request.auth.uid == resource.data.white_id
+              || request.auth.uid == resource.data.black_id
+            )
+            && (
+              (
+                request.resource.data.status == 'playing'
+                && request.resource.data.white_elo == null
+                && request.resource.data.black_elo == null
+                && request.resource.data.white_accept == false
+                && request.resource.data.black_accept == false
+                && request.resource.data.server_at == request.time
+                && request.resource.data.created_at == resource.data.created_at
+                && request.resource.data.plyCount == resource.data.plyCount + 1
+                && request.resource.data.white_before == resource.data.white_before
+                && request.resource.data.black_before == resource.data.black_before
+              )
+              || (
+                request.resource.data.status == 'done'
+                && resource.data.white_accept == false
+                && resource.data.black_accept == false
+                && request.resource.data.server_at == request.time
+                && request.resource.data.created_at == resource.data.created_at
+                && request.resource.data.plyCount == resource.data.plyCount + 1
+                && request.resource.data.white_before == resource.data.white_before
+                && request.resource.data.black_before == resource.data.black_before
+                && (
+                  request.resource.data.winner == 'white'
+                  || request.resource.data.winner == 'black'
+                  || request.resource.data.winner == null
+                )
+                && awardNearBase(resource.data.white_before, request.resource.data.white_elo)
+                && awardNearBase(resource.data.black_before, request.resource.data.black_elo)
+                && (
+                  (
+                    request.auth.uid == resource.data.white_id
+                    && request.resource.data.white_accept == true
+                    && request.resource.data.black_accept == false
+                  )
+                  || (
+                    request.auth.uid == resource.data.black_id
+                    && request.resource.data.black_accept == true
+                    && request.resource.data.white_accept == false
+                  )
+                )
+              )
+            )
+          )
+        );
+      allow update: if request.auth != null
+        && resource.data.status == 'done'
+        && request.resource.data.status == 'done'
+        && request.resource.data.white_id == resource.data.white_id
+        && request.resource.data.black_id == resource.data.black_id
+        && request.resource.data.white_civ == resource.data.white_civ
+        && request.resource.data.black_civ == resource.data.black_civ
+        && request.resource.data.code == resource.data.code
+        && request.resource.data.rated == resource.data.rated
+        && request.resource.data.winner == resource.data.winner
+        && request.resource.data.white_elo == resource.data.white_elo
+        && request.resource.data.black_elo == resource.data.black_elo
+        && request.resource.data.state == resource.data.state
+        && request.resource.data.updated_at == resource.data.updated_at
+        && request.resource.data.plyCount == resource.data.plyCount
+        && request.resource.data.server_at == resource.data.server_at
+        && request.resource.data.created_at == resource.data.created_at
+        && request.resource.data.white_before == resource.data.white_before
+        && request.resource.data.black_before == resource.data.black_before
+        && (
+          (
+            request.auth.uid == resource.data.white_id
+            && resource.data.white_accept == false
+            && request.resource.data.white_accept == true
+            && request.resource.data.black_accept == resource.data.black_accept
+          )
+          || (
+            request.auth.uid == resource.data.black_id
+            && resource.data.black_accept == false
+            && request.resource.data.black_accept == true
+            && request.resource.data.white_accept == resource.data.white_accept
+          )
+        );
+      allow delete: if false;
+
+      match /plies/{index} {
+        allow read: if request.auth != null && (
+          request.auth.uid == matchDoc(id).white_id
+          || request.auth.uid == matchDoc(id).black_id
+        );
+        allow create: if request.auth != null
+          && exists(/databases/$(database)/documents/matches/$(id))
+          && matchDoc(id).status == 'playing'
+          && (
+            request.auth.uid == matchDoc(id).white_id
+            || request.auth.uid == matchDoc(id).black_id
+          )
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.at == request.time
+          && request.resource.data.n == int(index)
+          && request.resource.data.n == matchDoc(id).plyCount
+          && request.resource.data.n < 400
+          && (
+            request.resource.data.kind == 'resign'
+            || request.resource.data.kind == 'claim'
+            || (
+              request.resource.data.kind == 'move'
+              && request.resource.data.from.row is int
+              && request.resource.data.from.col is int
+              && request.resource.data.to.row is int
+              && request.resource.data.to.col is int
+            )
+          );
+        allow update, delete: if false;
+      }
+    }
+  }
+}

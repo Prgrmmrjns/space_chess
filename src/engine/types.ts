@@ -1,6 +1,6 @@
 export type Color = 'white' | 'black'
 export type PieceType = 'pawn' | 'knight' | 'bishop' | 'rook' | 'queen' | 'king'
-export type Civilization = 'reptiloid' | 'crustacean' | 'blob'
+export type Civilization = 'reptiloid' | 'crustacean' | 'blob' | 'solarite' | 'silicate'
 export type GameMode = 'pvai' | 'pvp' | 'aivai'
 export type Difficulty = 'easy' | 'medium' | 'hard'
 export type GameStatus = 'playing' | 'check' | 'checkmate' | 'stalemate' | 'draw'
@@ -16,7 +16,7 @@ export interface Piece {
   moved: boolean
 }
 
-export type Hazard = 'asteroid' | 'planet' | 'blackhole' | 'wormhole'
+export type Hazard = 'asteroid' | 'planet' | 'blackhole' | 'wormhole' | 'star'
 
 export interface Square {
   piece: Piece | null
@@ -28,14 +28,17 @@ export interface Square {
 export interface Move {
   from: Pos
   to: Pos
-  /** Destination after wormhole teleport, if any */
+  /** Square the piece actually occupies after a wormhole or black-hole hop. */
   finalTo?: Pos
   promotion?: PieceType
   capture?: boolean
-  asteroidPush?: { from: Pos; to: Pos | null; destroyedEnemy?: Pos }
+  captured?: PieceType
+  asteroidPush?: { from: Pos; to: Pos | null; destroyedEnemy?: Pos; shattered?: boolean }
   spawnedPawns?: Pos[]
-  consumedByBlackHole?: boolean
   colonizedPlanet?: Pos
+  solarPush?: { from: Pos; to: Pos }[]
+  /** Pieces removed when stars drift at the end of a full turn. */
+  hazardDeaths?: Pos[]
 }
 
 export interface CivilizationSetup {
@@ -43,11 +46,34 @@ export interface CivilizationSetup {
   black: Civilization
 }
 
+export interface AsteroidBody {
+  pos: Pos
+  /** +1 drifts toward higher files, -1 toward lower. Bounces at the edge. */
+  dir: 1 | -1
+}
+
+export interface PlanetBody {
+  pos: Pos
+  owner: Color | null
+  /** Center of the clockwise ring. This tracks the planet's sun. */
+  anchor: Pos
+  step: number
+  /** Index into `space.stars`. The planet walks that sun's ring. */
+  sun?: number
+}
+
+export interface StarBody {
+  pos: Pos
+  dr: -1 | 1
+  dc: -1 | 1
+}
+
 export interface SpaceLayout {
-  asteroids: Pos[]
-  planets: Pos[]
+  asteroids: AsteroidBody[]
+  planets: PlanetBody[]
   blackHoles: Pos[]
   wormholePairs: [Pos, Pos][]
+  stars: StarBody[]
 }
 
 export interface GameConfig {
@@ -64,6 +90,7 @@ export interface GameState {
   board: Square[][]
   turn: Color
   civs: CivilizationSetup
+  space: SpaceLayout
   enPassant: Pos | null
   lastMove: Move | null
   status: GameStatus

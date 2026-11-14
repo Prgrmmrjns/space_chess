@@ -55,9 +55,11 @@ export interface AsteroidBody {
 export interface PlanetBody {
   pos: Pos
   owner: Color | null
-  /** Center of the clockwise ring. `pos` is `anchor + ring[step]`. */
+  /** Center of the clockwise ring. This tracks the planet's sun. */
   anchor: Pos
   step: number
+  /** Index into `space.stars`. The planet walks that sun's ring. */
+  sun?: number
 }
 
 export interface StarBody {

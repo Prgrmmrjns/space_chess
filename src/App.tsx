@@ -2,10 +2,11 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { CIV_LABELS, FLEET_NAMES } from './engine/constants'
 import { cloneState } from './engine/board'
 import { getLegalMoves, playMove, playMoveObject, startGame, statusLabel } from './engine/game'
-import type { Civilization, GameConfig, GameState, Move, PieceType, Pos } from './engine/types'
+import type { Civilization, Color, GameConfig, GameState, Move, PieceType, Pos } from './engine/types'
 import { opponent } from './engine/types'
 import { tauntLine, type TauntEvent } from './ai/taunts'
 import { Board } from './components/Board'
+import { ShipKey } from './components/ShipKey'
 import { CivPortrait } from './components/CivPortrait'
 import { RulesPanel } from './components/RulesPanel'
 import { SetupScreen } from './components/SetupScreen'
@@ -132,7 +133,7 @@ export default function App() {
 
     let cancelled = false
     setThinking(true)
-    const delay = config.mode === 'aivai' ? 700 : 180
+    const delay = config.mode === 'aivai' ? 900 : 800
     const timer = window.setTimeout(async () => {
       const move = await requestMove(state, config.difficulty)
       if (cancelled || !move) {
@@ -218,6 +219,7 @@ export default function App() {
                   active={state.turn === 'black'}
                   talking={!!taunt && aiCiv === state.civs.black}
                   line={aiCiv === state.civs.black ? taunt : null}
+                  thinking={thinking && thinkingSide(state, config) === 'black'}
                 />
               </aside>
 
@@ -238,9 +240,9 @@ export default function App() {
                   active={state.turn === 'white'}
                   talking={!!taunt && aiCiv === state.civs.white}
                   line={aiCiv === state.civs.white ? taunt : null}
+                  thinking={thinking && thinkingSide(state, config) === 'white'}
                 />
                 <div className="tips">
-                  {thinking && <p className="thinking">Calculating trajectory…</p>}
                   {state.lastMove?.spawnedPawns?.length ? (
                     <p>Planet claimed — fighters inbound.</p>
                   ) : null}
@@ -252,6 +254,11 @@ export default function App() {
                 </div>
               </aside>
             </div>
+            <ShipKey
+              selected={
+                selected ? (state.board[selected.row][selected.col].piece?.type ?? null) : null
+              }
+            />
           </main>
         )
       )}
@@ -307,7 +314,13 @@ function tauntEvent(state: GameState, mover: GameState['turn']): TauntEvent {
   const taken = state.lastMove?.captured
   if (taken === 'queen' || taken === 'rook') return 'blunder'
   if (state.lastMove?.capture || state.lastMove?.hazardDeaths?.length) return 'capture'
-  return 'start'
+  return state.lastMove ? 'move' : 'start'
+}
+
+function thinkingSide(state: GameState, config: GameConfig): Color | null {
+  if (config.mode === 'aivai') return state.turn
+  if (config.mode !== 'pvai') return null
+  return config.playerColor === 'white' ? 'black' : 'white'
 }
 
 function isHumanTurn(state: GameState, config: GameConfig): boolean {
@@ -322,18 +335,21 @@ function CivBadge({
   active,
   talking,
   line,
+  thinking,
 }: {
   label: string
   civ: keyof typeof CIV_LABELS
   active: boolean
   talking?: boolean
   line?: string | null
+  thinking?: boolean
 }) {
   return (
     <div className={`civ-badge civ-${civ} ${active ? 'active' : ''}`}>
       <CivPortrait civ={civ} talking={talking} />
       <span className="eyebrow">{label}</span>
       <strong>{CIV_LABELS[civ]}</strong>
+      {thinking && <p className="thinking">Calculating trajectory…</p>}
       {line && <p className="taunt">{line}</p>}
     </div>
   )

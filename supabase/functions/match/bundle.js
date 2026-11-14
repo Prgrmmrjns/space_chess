@@ -11,7 +11,6 @@ function nextElo(rating, opponentRating, score, k = 32) {
 // src/engine/constants.ts
 var BOARD_SIZE = 16;
 var ASTEROID_COUNT = 8;
-var PLANET_COUNT = 4;
 var BLACK_HOLE_COUNT = 2;
 var WORMHOLE_PAIRS = 2;
 var STAR_COUNT = 4;
@@ -103,9 +102,44 @@ function ringPos(anchor, step) {
   const [dr, dc] = PLANET_RING[step % PLANET_RING.length];
   return { row: anchor.row + dr, col: anchor.col + dc };
 }
+function separated(pos, others) {
+  return others.every(
+    (other) => Math.max(Math.abs(other.row - pos.row), Math.abs(other.col - pos.col)) >= 3
+  );
+}
 function generateSpaceLayout(seed = Date.now()) {
   const rng = createRng(seed);
   const taken = /* @__PURE__ */ new Set();
+  const reserve = (pos) => taken.add(posKey(pos));
+  const sunSpots = [];
+  for (let row = 3; row <= 12; row++) {
+    for (let col = 2; col <= 13; col++) sunSpots.push({ row, col });
+  }
+  shuffle(sunSpots, rng);
+  const stars = [];
+  const planets = [];
+  for (const spot of sunSpots) {
+    if (stars.length >= STAR_COUNT) break;
+    if (!separated(spot, stars.map((star) => star.pos))) continue;
+    const ring = PLANET_RING.map((_, step2) => ringPos(spot, step2));
+    if (ring.some((pos) => !inBounds(pos.row, pos.col) || taken.has(posKey(pos)))) continue;
+    if (taken.has(posKey(spot))) continue;
+    const step = Math.floor(rng() * PLANET_RING.length);
+    stars.push({
+      pos: spot,
+      dr: rng() < 0.5 ? -1 : 1,
+      dc: rng() < 0.5 ? -1 : 1
+    });
+    planets.push({
+      pos: ring[step],
+      owner: null,
+      anchor: { ...spot },
+      step,
+      sun: stars.length - 1
+    });
+    reserve(spot);
+    for (const pos of ring) reserve(pos);
+  }
   const spots = [];
   for (let row = 3; row <= 12; row++) {
     for (let col = 0; col < BOARD_SIZE; col++) spots.push({ row, col });
@@ -133,37 +167,11 @@ function generateSpaceLayout(seed = Date.now()) {
     const b = take();
     if (a && b) wormholePairs.push([a, b]);
   }
-  const stars = [];
-  for (let n = 0; n < STAR_COUNT; n++) {
-    const spot = take();
-    if (!spot) break;
-    stars.push({
-      pos: spot,
-      dr: rng() < 0.5 ? -1 : 1,
-      dc: rng() < 0.5 ? -1 : 1
-    });
-  }
   const asteroids = [];
   for (let n = 0; n < ASTEROID_COUNT; n++) {
     const spot = take();
     if (!spot) break;
     asteroids.push({ pos: spot, dir: rng() < 0.5 ? -1 : 1 });
-  }
-  const anchors = [];
-  for (let row = 4; row <= 11; row++) {
-    for (let col = 1; col <= 14; col++) anchors.push({ row, col });
-  }
-  shuffle(anchors, rng);
-  const planets = [];
-  for (const anchor of anchors) {
-    if (planets.length >= PLANET_COUNT) break;
-    const step = Math.floor(rng() * PLANET_RING.length);
-    const pos = ringPos(anchor, step);
-    if (!inBounds(pos.row, pos.col)) continue;
-    const key = posKey(pos);
-    if (taken.has(key)) continue;
-    taken.add(key);
-    planets.push({ pos, owner: null, anchor, step });
   }
   return { asteroids, planets, blackHoles, wormholePairs, stars };
 }
@@ -228,35 +236,6 @@ function flip(dir) {
 }
 function advanceHazards(state) {
   const deaths = [];
-  for (const asteroid of state.space.asteroids) {
-    const aheadCol = asteroid.pos.col + asteroid.dir;
-    const tryStep = (dir) => {
-      const col = asteroid.pos.col + dir;
-      if (!inBounds(asteroid.pos.row, col)) return null;
-      const next = { row: asteroid.pos.row, col };
-      if (hazardOccupied(state, next, asteroid.pos)) return null;
-      if (state.board[next.row][next.col].piece) return null;
-      return next;
-    };
-    const ahead = inBounds(asteroid.pos.row, aheadCol) ? tryStep(asteroid.dir) : null;
-    if (ahead) {
-      asteroid.pos = ahead;
-      continue;
-    }
-    const bounced = flip(asteroid.dir);
-    asteroid.dir = bounced;
-    const back = tryStep(bounced);
-    if (back) asteroid.pos = back;
-  }
-  for (const planet of state.space.planets) {
-    const nextStep = (planet.step + 1) % PLANET_RING.length;
-    const next = ringPos(planet.anchor, nextStep);
-    if (!inBounds(next.row, next.col)) continue;
-    if (hazardOccupied(state, next, planet.pos)) continue;
-    if (state.board[next.row][next.col].piece) continue;
-    planet.step = nextStep;
-    planet.pos = next;
-  }
   for (const star of state.space.stars) {
     let dr = star.dr;
     let dc = star.dc;
@@ -284,6 +263,38 @@ function advanceHazards(state) {
       continue;
     }
     star.pos = next;
+  }
+  for (const planet of state.space.planets) {
+    const sun = planet.sun != null ? state.space.stars[planet.sun] : null;
+    const center = sun ? sun.pos : planet.anchor;
+    planet.anchor = { row: center.row, col: center.col };
+    const nextStep = (planet.step + 1) % PLANET_RING.length;
+    const next = ringPos(center, nextStep);
+    if (!inBounds(next.row, next.col)) continue;
+    if (hazardOccupied(state, next, planet.pos)) continue;
+    if (state.board[next.row][next.col].piece) continue;
+    planet.step = nextStep;
+    planet.pos = next;
+  }
+  for (const asteroid of state.space.asteroids) {
+    const aheadCol = asteroid.pos.col + asteroid.dir;
+    const tryStep = (dir) => {
+      const col = asteroid.pos.col + dir;
+      if (!inBounds(asteroid.pos.row, col)) return null;
+      const next = { row: asteroid.pos.row, col };
+      if (hazardOccupied(state, next, asteroid.pos)) return null;
+      if (state.board[next.row][next.col].piece) return null;
+      return next;
+    };
+    const ahead = inBounds(asteroid.pos.row, aheadCol) ? tryStep(asteroid.dir) : null;
+    if (ahead) {
+      asteroid.pos = ahead;
+      continue;
+    }
+    const bounced = flip(asteroid.dir);
+    asteroid.dir = bounced;
+    const back = tryStep(bounced);
+    if (back) asteroid.pos = back;
   }
   paintSpace(state);
   return deaths;

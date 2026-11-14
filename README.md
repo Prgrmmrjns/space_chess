@@ -48,9 +48,9 @@ The layout is seeded, so both players see the same sky. After Black moves, every
 
 | Body | Movement |
 |---|---|
-| Asteroid | Drifts one file and bounces off the edge, a ship, or another hazard. |
-| Planet | Walks a clockwise loop around its anchor and keeps its owner. |
-| Star | Drifts one diagonal step. A ship it lands on is destroyed, unless that ship is a Blob or a Solarite. |
+| Asteroid | Drifts one file and bounces off the edge, a ship, or another hazard. A corner mark shows the next square. |
+| Planet | After its sun steps, the planet takes the next clockwise square on that sun’s ring and keeps its owner. The dashed ring is the circle it is about to travel. |
+| Star | The sun. Drifts one diagonal step. A ship it lands on is destroyed, unless that ship is a Blob or a Solarite. A corner mark shows the next square. |
 | Black hole | Stays put. The hole and every adjacent square are closed to anyone who is not a Blob. |
 | Wormhole | Stays paired. Enter one, exit the other, and capture an enemy standing on the exit. |
 

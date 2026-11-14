@@ -16,6 +16,7 @@ import {
 } from '../online/client'
 import type { MatchRow } from '../online/server'
 import { Board } from './Board'
+import { ShipKey } from './ShipKey'
 import { CivPortrait } from './CivPortrait'
 import { RulesPanel } from './RulesPanel'
 
@@ -568,6 +569,11 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
                 </div>
               </aside>
             </div>
+          )}
+          {state && myColor && match.black_civ && (
+            <ShipKey
+              selected={selected ? (state.board[selected.row][selected.col].piece?.type ?? null) : null}
+            />
           )}
         </main>
       )}

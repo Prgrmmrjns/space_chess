@@ -51,13 +51,26 @@ export const FLEET_NAMES: Record<
   king: 'Flagship',
 }
 
+/** One line each, shown beside the board while that ship is selected. */
+export const FLEET_MOVES: Record<
+  'pawn' | 'knight' | 'bishop' | 'rook' | 'queen' | 'king',
+  string
+> = {
+  pawn: 'Steps forward, or two from the start. Captures diagonally. Promotes on the far rank.',
+  knight: 'Leaps in an L and hops over ships and hazards.',
+  bishop: 'Slides any distance diagonally.',
+  rook: 'Slides any distance along a rank or file.',
+  queen: 'Slides any distance, in every direction.',
+  king: 'One square any way. Both flagships must stay safe. Castles inside its own half.',
+}
+
 export const DIFFICULTY_BLURB = {
   easy: 'One ply, and it sometimes flies sloppy.',
   medium: 'Looks two plies ahead.',
   hard: 'Looks three plies ahead, still on a budget.',
 } as const
 
-/** Clockwise ring around a planet anchor, starting north. */
+/** Clockwise ring around a sun, starting north. */
 export const PLANET_RING: readonly (readonly [number, number])[] = [
   [-1, 0],
   [-1, 1],

@@ -1,4 +1,5 @@
-import { CIV_ABILITIES, CIV_LABELS, FLEET_NAMES } from '../engine/constants'
+import { CIV_ABILITIES, CIV_LABELS, FLEET_MOVES, FLEET_NAMES } from '../engine/constants'
+import type { PieceType } from '../engine/types'
 
 interface Props {
   open: boolean
@@ -22,10 +23,15 @@ export function RulesPanel({ open, onClose }: Props) {
             <p>
               Space Chess is a 16×16 fleet battle. Every file starts occupied: a full rank of{' '}
               <strong>{FLEET_NAMES.pawn.toLowerCase()}s</strong>, and a back rank that is the
-              standard line twice. Movement matches chess — fighters step and capture diagonally,
-              cruisers leap, frigates ride diagonals, battleships ride ranks and files, dreadnoughts
-              do both.
+              standard line twice.
             </p>
+            <ul>
+              {(Object.keys(FLEET_MOVES) as PieceType[]).map((type) => (
+                <li key={type}>
+                  <strong>{FLEET_NAMES[type]}:</strong> {FLEET_MOVES[type]}
+                </li>
+              ))}
+            </ul>
             <p>
               Each side has <strong>two flagships</strong>. You are in check if either one is
               attacked, and a move that leaves either one in check is illegal. Checkmate is no
@@ -38,15 +44,17 @@ export function RulesPanel({ open, onClose }: Props) {
             <ul>
               <li>
                 <strong>Asteroids</strong> drift one file after every full turn and bounce off
-                edges, ships, and other hazards.
+                edges, ships, and other hazards. A corner mark shows the next square.
               </li>
               <li>
-                <strong>Planets</strong> walk a small clockwise loop and keep their owner. Most
-                ships must stop on them. Landing claims the planet.
+                <strong>Planets</strong> walk clockwise around their sun. The dashed ring is that
+                circle after the sun’s next step. Most ships must stop on a planet. Landing claims
+                it.
               </li>
               <li>
-                <strong>Stars</strong> drift one diagonal step and burn any ship they land on.
-                Blobs and Solarites are not burned.
+                <strong>Stars</strong> are the suns. They drift one diagonal step and burn any ship
+                they land on. Blobs and Solarites are not burned. A corner mark shows the next
+                square.
               </li>
               <li>
                 <strong>Black holes</strong> stay put. The hole and every adjacent square are

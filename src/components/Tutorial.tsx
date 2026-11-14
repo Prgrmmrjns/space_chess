@@ -20,7 +20,7 @@ interface Props {
 const STEPS = [
   {
     title: 'Pick a ship',
-    body: 'Tap one of your ships. Fighters step and capture like pawns. Cruisers leap. Frigates take diagonals. Battleships take ranks and files. Dreadnoughts do both. Each side has two flagships.',
+    body: 'Tap one of your ships. The list under the board spells out what that ship can do, and the selected line lights up. Each side has two flagships, and a move that leaves either one in check is illegal.',
   },
   {
     title: 'Read the highlights',
@@ -28,7 +28,7 @@ const STEPS = [
   },
   {
     title: 'Five hazards',
-    body: 'Asteroids block lanes. Planets stop most ships and can be claimed. Stars drift on diagonals and burn whatever they land on. Black holes and the squares beside them swallow anyone who is not a Blob. Wormholes come in pairs and throw you to the twin.',
+    body: 'A dashed ring is a planet’s orbit around its sun. A corner mark is where that asteroid, planet, or sun will be after the next full turn. Stars burn whatever they land on. Black holes swallow anyone who is not a Blob. Wormholes come in pairs and throw you to the twin.',
   },
   {
     title: 'Your civilisation',

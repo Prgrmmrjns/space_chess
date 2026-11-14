@@ -4,7 +4,6 @@ import {
   BLACK_HOLE_COUNT,
   BLACK_PAWN_ROW,
   BOARD_SIZE,
-  PLANET_COUNT,
   PLANET_RING,
   STAR_COUNT,
   WHITE_BACK,
@@ -104,9 +103,48 @@ export function ringPos(anchor: Pos, step: number): Pos {
   return { row: anchor.row + dr, col: anchor.col + dc }
 }
 
+function separated(pos: Pos, others: Pos[]): boolean {
+  return others.every(
+    (other) => Math.max(Math.abs(other.row - pos.row), Math.abs(other.col - pos.col)) >= 3,
+  )
+}
+
 export function generateSpaceLayout(seed = Date.now()): SpaceLayout {
   const rng = createRng(seed)
   const taken = new Set<string>()
+  const reserve = (pos: Pos) => taken.add(posKey(pos))
+
+  const sunSpots: Pos[] = []
+  for (let row = 3; row <= 12; row++) {
+    for (let col = 2; col <= 13; col++) sunSpots.push({ row, col })
+  }
+  shuffle(sunSpots, rng)
+
+  const stars: StarBody[] = []
+  const planets: PlanetBody[] = []
+  for (const spot of sunSpots) {
+    if (stars.length >= STAR_COUNT) break
+    if (!separated(spot, stars.map((star) => star.pos))) continue
+    const ring = PLANET_RING.map((_, step) => ringPos(spot, step))
+    if (ring.some((pos) => !inBounds(pos.row, pos.col) || taken.has(posKey(pos)))) continue
+    if (taken.has(posKey(spot))) continue
+    const step = Math.floor(rng() * PLANET_RING.length)
+    stars.push({
+      pos: spot,
+      dr: rng() < 0.5 ? -1 : 1,
+      dc: rng() < 0.5 ? -1 : 1,
+    })
+    planets.push({
+      pos: ring[step],
+      owner: null,
+      anchor: { ...spot },
+      step,
+      sun: stars.length - 1,
+    })
+    reserve(spot)
+    for (const pos of ring) reserve(pos)
+  }
+
   const spots: Pos[] = []
   for (let row = 3; row <= 12; row++) {
     for (let col = 0; col < BOARD_SIZE; col++) spots.push({ row, col })
@@ -138,40 +176,11 @@ export function generateSpaceLayout(seed = Date.now()): SpaceLayout {
     if (a && b) wormholePairs.push([a, b])
   }
 
-  const stars: StarBody[] = []
-  for (let n = 0; n < STAR_COUNT; n++) {
-    const spot = take()
-    if (!spot) break
-    stars.push({
-      pos: spot,
-      dr: rng() < 0.5 ? -1 : 1,
-      dc: rng() < 0.5 ? -1 : 1,
-    })
-  }
-
   const asteroids: AsteroidBody[] = []
   for (let n = 0; n < ASTEROID_COUNT; n++) {
     const spot = take()
     if (!spot) break
     asteroids.push({ pos: spot, dir: rng() < 0.5 ? -1 : 1 })
-  }
-
-  const anchors: Pos[] = []
-  for (let row = 4; row <= 11; row++) {
-    for (let col = 1; col <= 14; col++) anchors.push({ row, col })
-  }
-  shuffle(anchors, rng)
-
-  const planets: PlanetBody[] = []
-  for (const anchor of anchors) {
-    if (planets.length >= PLANET_COUNT) break
-    const step = Math.floor(rng() * PLANET_RING.length)
-    const pos = ringPos(anchor, step)
-    if (!inBounds(pos.row, pos.col)) continue
-    const key = posKey(pos)
-    if (taken.has(key)) continue
-    taken.add(key)
-    planets.push({ pos, owner: null, anchor, step })
   }
 
   return { asteroids, planets, blackHoles, wormholePairs, stars }
@@ -244,41 +253,11 @@ function flip(dir: 1 | -1): 1 | -1 {
 /**
  * Drift every moving body one step. Called once a full turn ends
  * (after Black moves, when White is to move again). Stars destroy
- * any piece they land on, except Blobs and Solarites.
+ * any piece they land on, except Blobs and Solarites. Each planet
+ * then takes the next clockwise step around its sun.
  */
 export function advanceHazards(state: GameState): Pos[] {
   const deaths: Pos[] = []
-
-  for (const asteroid of state.space.asteroids) {
-    const aheadCol = asteroid.pos.col + asteroid.dir
-    const tryStep = (dir: 1 | -1): Pos | null => {
-      const col = asteroid.pos.col + dir
-      if (!inBounds(asteroid.pos.row, col)) return null
-      const next = { row: asteroid.pos.row, col }
-      if (hazardOccupied(state, next, asteroid.pos)) return null
-      if (state.board[next.row][next.col].piece) return null
-      return next
-    }
-    const ahead = inBounds(asteroid.pos.row, aheadCol) ? tryStep(asteroid.dir) : null
-    if (ahead) {
-      asteroid.pos = ahead
-      continue
-    }
-    const bounced = flip(asteroid.dir)
-    asteroid.dir = bounced
-    const back = tryStep(bounced)
-    if (back) asteroid.pos = back
-  }
-
-  for (const planet of state.space.planets) {
-    const nextStep = (planet.step + 1) % PLANET_RING.length
-    const next = ringPos(planet.anchor, nextStep)
-    if (!inBounds(next.row, next.col)) continue
-    if (hazardOccupied(state, next, planet.pos)) continue
-    if (state.board[next.row][next.col].piece) continue
-    planet.step = nextStep
-    planet.pos = next
-  }
 
   for (const star of state.space.stars) {
     let dr = star.dr
@@ -310,8 +289,77 @@ export function advanceHazards(state: GameState): Pos[] {
     star.pos = next
   }
 
+  for (const planet of state.space.planets) {
+    const sun = planet.sun != null ? state.space.stars[planet.sun] : null
+    const center = sun ? sun.pos : planet.anchor
+    planet.anchor = { row: center.row, col: center.col }
+    const nextStep = (planet.step + 1) % PLANET_RING.length
+    const next = ringPos(center, nextStep)
+    if (!inBounds(next.row, next.col)) continue
+    if (hazardOccupied(state, next, planet.pos)) continue
+    if (state.board[next.row][next.col].piece) continue
+    planet.step = nextStep
+    planet.pos = next
+  }
+
+  for (const asteroid of state.space.asteroids) {
+    const aheadCol = asteroid.pos.col + asteroid.dir
+    const tryStep = (dir: 1 | -1): Pos | null => {
+      const col = asteroid.pos.col + dir
+      if (!inBounds(asteroid.pos.row, col)) return null
+      const next = { row: asteroid.pos.row, col }
+      if (hazardOccupied(state, next, asteroid.pos)) return null
+      if (state.board[next.row][next.col].piece) return null
+      return next
+    }
+    const ahead = inBounds(asteroid.pos.row, aheadCol) ? tryStep(asteroid.dir) : null
+    if (ahead) {
+      asteroid.pos = ahead
+      continue
+    }
+    const bounced = flip(asteroid.dir)
+    asteroid.dir = bounced
+    const back = tryStep(bounced)
+    if (back) asteroid.pos = back
+  }
+
   paintSpace(state)
   return deaths
+}
+
+export interface SpaceForecast {
+  /** Ring the planet will travel after the next full turn, around its sun's next square. */
+  orbits: Pos[]
+  nextAsteroids: Pos[]
+  nextPlanets: Pos[]
+  nextStars: Pos[]
+}
+
+/** Where the sky will be after the next hazard tick. Does not change `state`. */
+export function forecastSpace(state: GameState): SpaceForecast {
+  const next = cloneState(state)
+  advanceHazards(next)
+  const orbits: Pos[] = []
+  for (const planet of next.space.planets) {
+    for (let step = 0; step < PLANET_RING.length; step++) {
+      const pos = ringPos(planet.anchor, step)
+      if (inBounds(pos.row, pos.col)) orbits.push(pos)
+    }
+  }
+  const moved = (from: Pos, to: Pos | undefined): Pos | null =>
+    to && !samePos(from, to) ? to : null
+  return {
+    orbits,
+    nextAsteroids: state.space.asteroids
+      .map((body, index) => moved(body.pos, next.space.asteroids[index]?.pos))
+      .filter((pos): pos is Pos => pos !== null),
+    nextPlanets: state.space.planets
+      .map((body, index) => moved(body.pos, next.space.planets[index]?.pos))
+      .filter((pos): pos is Pos => pos !== null),
+    nextStars: state.space.stars
+      .map((body, index) => moved(body.pos, next.space.stars[index]?.pos))
+      .filter((pos): pos is Pos => pos !== null),
+  }
 }
 
 export function cloneSquare(sq: Square): Square {

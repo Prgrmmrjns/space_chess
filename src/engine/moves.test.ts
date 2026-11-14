@@ -5,6 +5,8 @@ import {
   createInitialState,
   emptySpace,
   findKings,
+  forecastSpace,
+  generateSpaceLayout,
   getSquare,
   paintSpace,
 } from './board'
@@ -265,6 +267,52 @@ describe('stars', () => {
     expect(advanceHazards(state)).toEqual([])
     expect(state.board[6][6].piece?.type).toBe('pawn')
     expect(state.space.stars[0]?.pos).toEqual({ row: 5, col: 5 })
+  })
+
+  it('walks each planet one step clockwise around its sun', () => {
+    const state = bare(
+      { white: 'blob', black: 'blob' },
+      {
+        ...emptySpace(),
+        stars: [{ pos: { row: 8, col: 8 }, dr: 1, dc: 1 }],
+        planets: [
+          {
+            pos: { row: 7, col: 8 },
+            owner: null,
+            anchor: { row: 8, col: 8 },
+            step: 0,
+            sun: 0,
+          },
+        ],
+      },
+    )
+    paintSpace(state)
+    const forecast = forecastSpace(state)
+    expect(forecast.nextStars).toEqual([{ row: 9, col: 9 }])
+    expect(forecast.nextPlanets).toEqual([{ row: 8, col: 10 }])
+    expect(forecast.orbits).toContainEqual({ row: 8, col: 10 })
+    expect(forecast.orbits).toContainEqual({ row: 8, col: 9 })
+
+    advanceHazards(state)
+    expect(state.space.stars[0]?.pos).toEqual({ row: 9, col: 9 })
+    expect(state.space.planets[0]?.pos).toEqual({ row: 8, col: 10 })
+    expect(state.space.planets[0]?.anchor).toEqual({ row: 9, col: 9 })
+    expect(state.space.planets[0]?.step).toBe(1)
+  })
+
+  it('pairs every generated planet with the ring around its sun', () => {
+    const layout = generateSpaceLayout(7)
+    expect(layout.planets).toHaveLength(layout.stars.length)
+    expect(layout.planets.length).toBeGreaterThan(0)
+    for (const planet of layout.planets) {
+      const sun = layout.stars[planet.sun ?? -1]
+      expect(sun).toBeTruthy()
+      expect(planet.anchor).toEqual(sun.pos)
+      expect(planet.pos).toEqual({
+        row: sun.pos.row + [-1, -1, 0, 1, 1, 1, 0, -1][planet.step],
+        col: sun.pos.col + [0, 1, 1, 1, 0, -1, -1, -1][planet.step],
+      })
+    }
   })
 
   it('lets a solarite flare push an enemy off a star', () => {

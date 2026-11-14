@@ -1,5 +1,6 @@
 import { nextElo } from '../engine/elo'
 import { playMove, startGame } from '../engine/game'
+import { openingSeed, replayMatch, type PlyRecord } from './replay'
 import type { Civilization, Color, GameState, PieceType, Pos } from '../engine/types'
 
 export type MatchStatus = 'open' | 'playing' | 'done'
@@ -23,7 +24,14 @@ export interface MatchRow {
   winner: Color | null
   rated: boolean
   updated_at: string
-  /** Set by that pilot when they stand behind a finished result. */
+  created_at?: string
+  /** Server time of the latest seated write. The claim clock reads this, not a client clock. */
+  server_at?: string
+  white_before?: number | null
+  black_before?: number | null
+  white_elo?: number | null
+  black_elo?: number | null
+  /** Set by that pilot when a replayed result matches the stored award. */
   white_accept?: boolean
   black_accept?: boolean
 }
@@ -33,7 +41,8 @@ export interface MatchDb {
   getByCode(code: string): Promise<MatchRow | null>
   getById(id: string): Promise<MatchRow | null>
   /** Compare-and-swap on updated_at. Returns null when the row moved. */
-  save(id: string, expectedUpdatedAt: string, next: MatchRow): Promise<MatchRow | null>
+  save(id: string, expectedUpdatedAt: string, next: MatchRow, ply?: PlyRecord | null): Promise<MatchRow | null>
+  listPlies(matchId: string): Promise<PlyRecord[]>
   getProfile(id: string): Promise<ProfileRow | null>
   setRating(id: string, elo: number, games: number): Promise<void>
 }
@@ -72,6 +81,7 @@ export async function handleAction(
       status: 'open',
       winner: null,
       rated: true,
+      created_at: new Date(now).toISOString(),
       updated_at: new Date(now).toISOString(),
     })
     return { ok: true, match }
@@ -89,7 +99,7 @@ export async function handleAction(
       difficulty: 'medium',
       playerColor: 'white',
       civs: { white: match.white_civ, black: body.civ },
-      seed: now,
+      seed: openingSeed(match.id),
     })
     const next: MatchRow = {
       ...match,
@@ -108,24 +118,37 @@ export async function handleAction(
   if (!match) return { ok: false, error: 'Match not found' }
   const color = seat(match, userId)
   if (!color) return { ok: false, error: 'You are not in this match' }
-  if (match.status !== 'playing' || !match.state) {
-    return { ok: false, error: 'This match is not in progress' }
-  }
+  if (match.status !== 'playing') return { ok: false, error: 'This match is not in progress' }
+  const replayed = replayMatch(match, await db.listPlies(match.id))
+  if (!replayed.ok || !replayed.state) return { ok: false, error: 'The saved moves do not replay' }
+  if (replayed.over) return { ok: false, error: 'This match is already over' }
+  const live: MatchRow = { ...match, state: replayed.state }
 
   if (body.action === 'resign') {
-    return finish(db, match, color === 'white' ? 'black' : 'white', now)
+    return finish(db, live, color === 'white' ? 'black' : 'white', now, {
+      by: userId,
+      kind: 'resign',
+      at: now,
+    })
   }
 
   if (body.action === 'claim') {
-    const waiting = Date.parse(match.updated_at)
-    if (match.state.turn === color) return { ok: false, error: 'It is your move' }
-    if (now - waiting < CLAIM_MS) return { ok: false, error: 'The minute has not passed' }
-    return finish(db, match, color, now)
+    if (live.state!.turn === color) return { ok: false, error: 'It is your move' }
+    if (now - replayed.clockAt < CLAIM_MS) return { ok: false, error: 'The minute has not passed' }
+    return finish(db, live, color, now, { by: userId, kind: 'claim', at: now })
   }
 
-  if (match.state.turn !== color) return { ok: false, error: 'Not your turn' }
-  const played = playMove(match.state, body.from, body.to, body.promotion ?? 'queen')
+  if (live.state!.turn !== color) return { ok: false, error: 'Not your turn' }
+  const played = playMove(live.state!, body.from, body.to, body.promotion ?? 'queen')
   if (!played.ok) return { ok: false, error: played.reason }
+  const ply: PlyRecord = {
+    by: userId,
+    kind: 'move',
+    from: body.from,
+    to: body.to,
+    promotion: body.promotion ?? 'queen',
+    at: now,
+  }
 
   const terminal =
     played.state.status === 'checkmate' ||
@@ -133,18 +156,17 @@ export async function handleAction(
     played.state.status === 'draw'
   if (!terminal) {
     const next: MatchRow = {
-      ...match,
+      ...live,
       state: played.state,
       updated_at: new Date(now).toISOString(),
     }
-    const saved = await db.save(match.id, match.updated_at, next)
+    const saved = await db.save(live.id, live.updated_at, next, ply)
     if (!saved) return { ok: false, error: 'The match moved on. Refresh.' }
     return { ok: true, match: saved }
   }
 
-  const winner =
-    played.state.status === 'checkmate' ? played.state.winner : null
-  return finish(db, { ...match, state: played.state }, winner, now)
+  const winner = played.state.status === 'checkmate' ? played.state.winner : null
+  return finish(db, { ...live, state: played.state }, winner, now, ply)
 }
 
 async function finish(
@@ -152,6 +174,7 @@ async function finish(
   match: MatchRow,
   winner: Color | null,
   now: number,
+  ply: PlyRecord,
 ): Promise<MatchResult> {
   const next: MatchRow = {
     ...match,
@@ -159,7 +182,7 @@ async function finish(
     winner,
     updated_at: new Date(now).toISOString(),
   }
-  const saved = await db.save(match.id, match.updated_at, next)
+  const saved = await db.save(match.id, match.updated_at, next, ply)
   if (!saved) return { ok: false, error: 'The match moved on. Refresh.' }
   if (saved.rated && saved.white_id && saved.black_id) {
     await writeElo(db, saved.white_id, saved.black_id, winner)

@@ -14,9 +14,10 @@ import {
   signUp,
   watchAuth,
   watchMatch,
+  watchPlies,
 } from '../online/client'
+import { awardsMatch, replayMatch, type PlyRecord } from '../online/replay'
 import type { MatchRow } from '../online/server'
-import { opponentFinishIsAcceptable } from '../online/witness'
 import { Board } from './Board'
 import { ShipKey } from './ShipKey'
 import { CivPortrait } from './CivPortrait'
@@ -61,7 +62,8 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   const [confirmResign, setConfirmResign] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const heard = useRef<string | null>(null)
-  const trusted = useRef<MatchRow | null>(null)
+  const signing = useRef(false)
+  const [plies, setPlies] = useState<PlyRecord[]>([])
 
   useEffect(() => {
     return watchAuth((id) => {
@@ -87,27 +89,16 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   useEffect(() => {
     if (!matchId) return
     return watchMatch(matchId, (next) => {
-      const prev = trusted.current
-      trusted.current = next
       setMatch(next)
       setSelected(null)
       setPromo(null)
-      const move = next.state?.lastMove
-      const repeat = heard.current === next.updated_at
-      const opened = heard.current === null
-      heard.current = next.updated_at
-      const mine = userId && next.white_id === userId ? 'white' : userId && next.black_id === userId ? 'black' : null
-      if (prev && mine && opponentFinishIsAcceptable(prev, next, mine)) {
-        void acceptResult(next.id)
-          .then(() => claimOwnRating(next.id))
-          .catch(() => undefined)
-      } else if (next.status === 'done') {
-        void claimOwnRating(next.id).catch(() => undefined)
-      }
-      if (!move || repeat || opened) return
-      playEffect(move.capture || move.hazardDeaths?.length ? 'capture' : 'move')
     })
-  }, [matchId, playEffect, userId])
+  }, [matchId])
+
+  useEffect(() => {
+    if (!matchId) return
+    return watchPlies(matchId, setPlies)
+  }, [matchId])
 
   async function refreshLobby() {
     if (!userId) return
@@ -136,13 +127,6 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   }, [view, userId])
 
   function accept(next: MatchRow) {
-    const move = next.state?.lastMove
-    if (move && heard.current !== null && heard.current !== next.updated_at) {
-      playEffect(move.capture || move.hazardDeaths?.length ? 'capture' : 'move')
-    }
-    heard.current = next.updated_at
-    trusted.current = next
-    if (next.status === 'done') void claimOwnRating(next.id).catch(() => undefined)
     setMatch(next)
     setSelected(null)
     setPromo(null)
@@ -248,13 +232,44 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   const myColor: Color | null =
     match && userId ? (match.white_id === userId ? 'white' : match.black_id === userId ? 'black' : null) : null
 
-  const state = match?.state ?? null
+  const replay = useMemo(() => (match && match.black_civ ? replayMatch(match, plies) : null), [match, plies])
+  const state = replay?.state ?? (match?.black_civ ? null : match?.state ?? null)
+
+  useEffect(() => {
+    if (!state?.lastMove) return
+    const stamp = String(plies.length)
+    if (heard.current === stamp) return
+    const opened = heard.current === null
+    heard.current = stamp
+    if (opened || plies.length === 0) return
+    const move = state.lastMove
+    playEffect(move.capture || move.hazardDeaths?.length ? 'capture' : 'move')
+  }, [plies.length, state, playEffect])
+
+  useEffect(() => {
+    if (!match || !myColor || !replay?.ok || !replay.over) return
+    if (match.status !== 'done' || match.winner !== replay.winner || !awardsMatch(match)) return
+    const accepted = myColor === 'white' ? match.white_accept === true : match.black_accept === true
+    if (accepted) {
+      void claimOwnRating(match.id).catch(() => undefined)
+      return
+    }
+    if (signing.current) return
+    signing.current = true
+    void acceptResult(match.id)
+      .then(() => claimOwnRating(match.id))
+      .catch(() => undefined)
+      .finally(() => {
+        signing.current = false
+      })
+  }, [match, myColor, replay])
   const impacts = useMemo(() => {
     const move = state?.lastMove
-    if (!move || !match) return []
-    if (Date.now() - Date.parse(match.updated_at) > 1600) return []
+    const clock = plies.length ? plies[plies.length - 1].at : 0
+    if (!move || !clock) return []
+    if (Date.now() - clock > 1600) return []
     return impactSquares(move)
-  }, [state, match])
+  }, [state, plies])
   const legalForSelected = useMemo(() => {
     if (!state || !selected) return []
     return getLegalMoves(state, selected)
@@ -495,9 +510,13 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
               <p className="status">
                 {match.status === 'open'
                   ? `Waiting for an opponent · ${match.code}`
-                  : state
-                    ? statusLabel(state)
-                    : match.status}
+                  : replay?.over
+                    ? replay.winner
+                      ? `${replay.winner === 'white' ? 'White' : 'Black'} wins`
+                      : 'Draw'
+                    : state
+                      ? statusLabel(state)
+                      : match.status}
               </p>
             </div>
             <div className="bar-actions">
@@ -517,7 +536,13 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
                     Resign
                   </button>
                 ))}
-              {match.status === 'playing' && myColor && state && state.turn !== myColor && now - Date.parse(match.updated_at) >= 60_000 && (
+              {match.status === 'playing' &&
+                myColor &&
+                replay &&
+                !replay.over &&
+                state &&
+                state.turn !== myColor &&
+                now - replay.clockAt >= 60_000 && (
                 <button type="button" onClick={() => void claim()} disabled={busy}>
                   Claim disconnect
                 </button>
@@ -571,27 +596,23 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
                 <div className="tips">
                   {error && <p className="error-line">{error}</p>}
                   {busy && <p className="thinking">Sending the order…</p>}
-                  {match.status === 'done' && (
+                  {replay?.over && replay.ok && (
                     <p>
-                      {match.winner
-                        ? `${match.winner === myColor ? 'You' : 'Your opponent'} win${match.winner === myColor ? '' : 's'}. Ratings update on the leaderboard.`
-                        : 'Draw. Both ratings move toward each other.'}
+                      {replay.winner
+                        ? `${replay.winner === myColor ? 'You' : 'Your opponent'} win${replay.winner === myColor ? '' : 's'}.`
+                        : 'Draw.'}{' '}
+                      {match.white_accept && match.black_accept
+                        ? 'Both pilots confirmed the moves, so the ratings can update.'
+                        : 'Ratings stay put until both clients confirm this replay.'}
                     </p>
                   )}
-                  {match.status === 'done' &&
-                    myColor &&
-                    !(myColor === 'white' ? match.white_accept : match.black_accept) && (
-                      <p>
-                        Both pilots have to accept this result before either rating changes.
-                        <button
-                          type="button"
-                          onClick={() => void acceptResult(match.id).then(() => claimOwnRating(match.id))}
-                        >
-                          Accept result
-                        </button>
-                      </p>
-                    )}
-                  <p className="hint">Both flagships must stay safe. An unconfirmed result does not change ratings.</p>
+                  {replay && !replay.ok && (
+                    <p className="error-line">A saved move does not replay from the opening, so neither rating will change.</p>
+                  )}
+                  {match.status === 'done' && replay?.ok && !replay.over && (
+                    <p className="error-line">The recorded finish does not match the moves, so neither rating will change.</p>
+                  )}
+                  <p className="hint">Both flagships must stay safe. Ratings follow the replayed moves, not a saved board.</p>
                 </div>
               </aside>
             </div>

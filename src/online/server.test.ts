@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { getLegalMoves } from '../engine/game'
 import type { Civilization } from '../engine/types'
 import { handleAction, type MatchDb, type MatchRow, type ProfileRow } from './server'
+import type { PlyRecord } from './replay'
 
 class MemoryDb implements MatchDb {
   matches = new Map<string, MatchRow>()
   profiles = new Map<string, ProfileRow>()
+  plies = new Map<string, PlyRecord[]>()
 
   async insertMatch(row: Omit<MatchRow, 'id'>) {
     const stored = { ...row, id: `m-${this.matches.size + 1}` }
@@ -18,11 +20,15 @@ class MemoryDb implements MatchDb {
   async getById(id: string) {
     return this.matches.get(id) ?? null
   }
-  async save(id: string, expectedUpdatedAt: string, next: MatchRow) {
+  async save(id: string, expectedUpdatedAt: string, next: MatchRow, ply?: PlyRecord | null) {
     const current = this.matches.get(id)
     if (!current || current.updated_at !== expectedUpdatedAt) return null
+    if (ply) this.plies.set(id, [...(this.plies.get(id) ?? []), ply])
     this.matches.set(id, next)
     return next
+  }
+  async listPlies(id: string) {
+    return this.plies.get(id) ?? []
   }
   async getProfile(id: string) {
     return this.profiles.get(id) ?? null

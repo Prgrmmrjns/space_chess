@@ -111,5 +111,5 @@ legacy/            original Pygame game
 ## Known limitations
 
 - Hard still stops at its node budget on a crowded board.
-- A rating changes only after both pilots accept the result, and only on the signed-in pilot's own profile. The client accepts an opponent's finish when it is their resignation, a timeout the clock already earned, or one legal move from the position it last saw. Two pilots who both choose to accept a result can still do so; this project has no paid Cloud Functions plan to move that check onto a server.
+- A rating changes only after both pilots confirm a result that replays from the opening through an append-only move list. Each move is signed by the account that played it and stamped by the server, so a saved board or a backdated clock cannot confirm a win. Two pilots can still agree to resign; this project has no paid Cloud Functions plan to move the check onto a server.
 - A disconnect claim is a full minute with no move. Closing the tab does not by itself stop the clock.

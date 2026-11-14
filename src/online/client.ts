@@ -17,12 +17,14 @@ import {
   orderBy,
   query,
   runTransaction,
+  serverTimestamp,
   setDoc,
   updateDoc,
   where,
   type Transaction,
 } from 'firebase/firestore'
 import { nextElo } from '../engine/elo'
+import { awardsMatch, type PlyRecord } from './replay'
 import {
   handleAction,
   type MatchAction,
@@ -99,7 +101,7 @@ export async function loadLobby(uid: string): Promise<MatchRow[]> {
   ])
   const byId = new Map<string, MatchRow>()
   for (const snap of [...open.docs, ...asWhite.docs, ...asBlack.docs]) {
-    byId.set(snap.id, snap.data() as MatchRow)
+    byId.set(snap.id, asRow(snap.data()))
   }
   return [...byId.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 }
@@ -110,8 +112,9 @@ export async function claimOwnRating(matchId: string): Promise<void> {
   if (!uid) return
   const snap = await getDoc(doc(db, 'matches', matchId))
   if (!snap.exists()) return
-  const match = snap.data()
+  const match = asRow(snap.data())
   if (match.status !== 'done' || match.white_accept !== true || match.black_accept !== true) return
+  if (!awardsMatch(match)) return
   const award = match.white_id === uid ? match.white_elo : match.black_id === uid ? match.black_elo : null
   if (typeof award !== 'number') return
   const profileRef = doc(db, 'profiles', uid)
@@ -147,7 +150,14 @@ export async function acceptResult(matchId: string): Promise<void> {
 
 export function watchMatch(id: string, onMatch: (match: MatchRow) => void): () => void {
   return onSnapshot(doc(db, 'matches', id), (snap) => {
-    if (snap.exists()) onMatch(snap.data() as MatchRow)
+    if (snap.exists()) onMatch(asRow(snap.data()))
+  })
+}
+
+export function watchPlies(matchId: string, onPlies: (plies: PlyRecord[]) => void): () => void {
+  const rows = query(collection(db, 'matches', matchId, 'plies'), orderBy('n'))
+  return onSnapshot(rows, (snap) => {
+    onPlies(snap.docs.map((row) => asPly(row.data())))
   })
 }
 
@@ -167,27 +177,66 @@ function firestoreDb(): MatchDb {
   return {
     async insertMatch(row) {
       const ref = doc(collection(db, 'matches'))
-      const stored = clean({ ...row, id: ref.id, white_accept: false, black_accept: false })
+      const stored = {
+        ...clean(row),
+        id: ref.id,
+        white_accept: false,
+        black_accept: false,
+        white_before: null,
+        black_before: null,
+        plyCount: 0,
+        server_at: serverTimestamp(),
+        created_at: serverTimestamp(),
+      }
       await setDoc(ref, stored)
-      return stored
+      return { ...row, id: ref.id }
     },
     async getByCode(code) {
       const snap = await getDocs(query(collection(db, 'matches'), where('code', '==', code), limit(1)))
       const first = snap.docs[0]
-      return first ? (first.data() as MatchRow) : null
+      return first ? asRow(first.data()) : null
     },
     async getById(id) {
       const snap = await getDoc(doc(db, 'matches', id))
-      return snap.exists() ? (snap.data() as MatchRow) : null
+      return snap.exists() ? asRow(snap.data()) : null
     },
-    async save(id, expectedUpdatedAt, next) {
+    async listPlies(id) {
+      const snap = await getDocs(query(collection(db, 'matches', id, 'plies'), orderBy('n')))
+      return snap.docs.map((row) => asPly(row.data()))
+    },
+    async save(id, expectedUpdatedAt, next, ply) {
       ratedMatchId = id
       const ref = doc(db, 'matches', id)
       return runTransaction(db, async (tx) => {
         const current = await tx.get(ref)
-        if (!current.exists() || current.data().updated_at !== expectedUpdatedAt) return null
-        const awards = await finishAwards(tx, next)
-        const stored = { ...clean(next), ...awards, ...acceptFlags(next) }
+        if (!current.exists() || asIso(current.data().updated_at) !== expectedUpdatedAt) return null
+        const data = current.data()
+        const count = Number(data.plyCount ?? 0)
+        if (ply) {
+          const plyRef = doc(db, 'matches', id, 'plies', String(count))
+          if ((await tx.get(plyRef)).exists()) return null
+          tx.set(plyRef, {
+            n: count,
+            by: auth.currentUser?.uid,
+            kind: ply.kind,
+            at: serverTimestamp(),
+            ...(ply.from && ply.to ? { from: ply.from, to: ply.to, promotion: ply.promotion ?? 'queen' } : {}),
+          })
+        }
+        const bases =
+          data.status === 'open' && next.status === 'playing' && next.black_id
+            ? await lockedRatings(tx, next.white_id, next.black_id)
+            : { white_before: data.white_before ?? null, black_before: data.black_before ?? null }
+        const awards = await finishAwards(next, bases)
+        const stored = {
+          ...clean(next),
+          ...awards,
+          ...acceptFlags(next),
+          ...bases,
+          plyCount: count + (ply ? 1 : 0),
+          server_at: serverTimestamp(),
+          created_at: data.created_at ?? serverTimestamp(),
+        }
         tx.set(ref, stored)
         return clean(next)
       })
@@ -210,25 +259,33 @@ function firestoreDb(): MatchDb {
       const data = snap.data()
       const award = data.white_id === id ? data.white_elo : data.black_elo
       if (typeof award !== 'number' || data.white_accept !== true || data.black_accept !== true) return
+      if (!awardsMatch(asRow(data))) return
       await updateDoc(doc(db, 'profiles', id), { elo: award, games, lastMatch: ratedMatchId })
     },
   }
 }
 
-async function finishAwards(
+async function lockedRatings(
   tx: Transaction,
+  whiteId: string,
+  blackId: string,
+): Promise<{ white_before: number; black_before: number }> {
+  const whiteSnap = await tx.get(doc(db, 'profiles', whiteId))
+  const blackSnap = await tx.get(doc(db, 'profiles', blackId))
+  if (!whiteSnap.exists() || !blackSnap.exists()) throw new Error('Both pilots need a rating')
+  return { white_before: Number(whiteSnap.data().elo), black_before: Number(blackSnap.data().elo) }
+}
+
+async function finishAwards(
   next: MatchRow,
+  bases: { white_before?: number | null; black_before?: number | null },
 ): Promise<{ white_elo: number; black_elo: number } | Record<string, never>> {
   if (next.status !== 'done' || !next.rated || !next.black_id) return {}
-  const whiteSnap = await tx.get(doc(db, 'profiles', next.white_id))
-  const blackSnap = await tx.get(doc(db, 'profiles', next.black_id))
-  if (!whiteSnap.exists() || !blackSnap.exists()) return {}
-  const whiteElo = Number(whiteSnap.data().elo)
-  const blackElo = Number(blackSnap.data().elo)
+  if (typeof bases.white_before !== 'number' || typeof bases.black_before !== 'number') return {}
   const whiteScore = next.winner === 'white' ? 1 : next.winner === 'black' ? 0 : 0.5
   return {
-    white_elo: nextElo(whiteElo, blackElo, whiteScore),
-    black_elo: nextElo(blackElo, whiteElo, 1 - whiteScore),
+    white_elo: nextElo(bases.white_before, bases.black_before, whiteScore),
+    black_elo: nextElo(bases.black_before, bases.white_before, 1 - whiteScore),
   }
 }
 
@@ -238,6 +295,40 @@ function acceptFlags(next: MatchRow): { white_accept: boolean; black_accept: boo
   return {
     white_accept: uid === next.white_id,
     black_accept: uid === next.black_id,
+  }
+}
+
+function asIso(value: unknown): string {
+  if (value && typeof value === 'object' && 'toDate' in value) {
+    return (value as { toDate: () => Date }).toDate().toISOString()
+  }
+  return typeof value === 'string' ? value : new Date(0).toISOString()
+}
+
+function asMillis(value: unknown): number {
+  return Date.parse(asIso(value))
+}
+
+function asRow(data: Record<string, unknown>): MatchRow {
+  return {
+    ...(data as unknown as MatchRow),
+    updated_at: asIso(data.updated_at),
+    created_at: data.created_at ? asIso(data.created_at) : undefined,
+    server_at: data.server_at ? asIso(data.server_at) : undefined,
+  }
+}
+
+function asPly(data: Record<string, unknown>): PlyRecord {
+  const from = data.from as PlyRecord['from']
+  const to = data.to as PlyRecord['to']
+  return {
+    n: Number(data.n),
+    by: String(data.by),
+    kind: data.kind === 'resign' || data.kind === 'claim' ? data.kind : 'move',
+    from,
+    to,
+    promotion: data.promotion as PlyRecord['promotion'],
+    at: asMillis(data.at),
   }
 }
 

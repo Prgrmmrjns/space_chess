@@ -9,12 +9,12 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/profiles/$(uid)).data.elo;
     }
 
-    function awardNear(uid, award) {
-      return award is number
+    function awardNearBase(before, award) {
+      return before is number
+        && award is number
         && award == math.round(award)
-        && exists(/databases/$(database)/documents/profiles/$(uid))
-        && award >= profileElo(uid) - 32
-        && award <= profileElo(uid) + 32;
+        && award >= before - 32
+        && award <= before + 32;
     }
 
     function ownFinishedAward(uid) {
@@ -67,6 +67,11 @@ service cloud.firestore {
         && request.resource.data.black_elo == null
         && request.resource.data.white_accept == false
         && request.resource.data.black_accept == false
+        && request.resource.data.white_before == null
+        && request.resource.data.black_before == null
+        && request.resource.data.plyCount == 0
+        && request.resource.data.server_at == request.time
+        && request.resource.data.created_at == request.time
         && request.resource.data.rated == true;
       allow update: if request.auth != null
         && resource.data.status != 'done'
@@ -85,6 +90,11 @@ service cloud.firestore {
             && request.resource.data.black_elo == null
             && request.resource.data.white_accept == false
             && request.resource.data.black_accept == false
+            && request.resource.data.plyCount == 0
+            && request.resource.data.server_at == request.time
+            && request.resource.data.created_at == resource.data.created_at
+            && request.resource.data.white_before == profileElo(resource.data.white_id)
+            && request.resource.data.black_before == profileElo(request.auth.uid)
           )
           || (
             resource.data.status == 'playing'
@@ -103,18 +113,28 @@ service cloud.firestore {
                 && request.resource.data.black_elo == null
                 && request.resource.data.white_accept == false
                 && request.resource.data.black_accept == false
+                && request.resource.data.server_at == request.time
+                && request.resource.data.created_at == resource.data.created_at
+                && request.resource.data.plyCount == resource.data.plyCount + 1
+                && request.resource.data.white_before == resource.data.white_before
+                && request.resource.data.black_before == resource.data.black_before
               )
               || (
                 request.resource.data.status == 'done'
                 && resource.data.white_accept == false
                 && resource.data.black_accept == false
+                && request.resource.data.server_at == request.time
+                && request.resource.data.created_at == resource.data.created_at
+                && request.resource.data.plyCount == resource.data.plyCount + 1
+                && request.resource.data.white_before == resource.data.white_before
+                && request.resource.data.black_before == resource.data.black_before
                 && (
                   request.resource.data.winner == 'white'
                   || request.resource.data.winner == 'black'
                   || request.resource.data.winner == null
                 )
-                && awardNear(resource.data.white_id, request.resource.data.white_elo)
-                && awardNear(resource.data.black_id, request.resource.data.black_elo)
+                && awardNearBase(resource.data.white_before, request.resource.data.white_elo)
+                && awardNearBase(resource.data.black_before, request.resource.data.black_elo)
                 && (
                   (
                     request.auth.uid == resource.data.white_id
@@ -145,6 +165,11 @@ service cloud.firestore {
         && request.resource.data.black_elo == resource.data.black_elo
         && request.resource.data.state == resource.data.state
         && request.resource.data.updated_at == resource.data.updated_at
+        && request.resource.data.plyCount == resource.data.plyCount
+        && request.resource.data.server_at == resource.data.server_at
+        && request.resource.data.created_at == resource.data.created_at
+        && request.resource.data.white_before == resource.data.white_before
+        && request.resource.data.black_before == resource.data.black_before
         && (
           (
             request.auth.uid == resource.data.white_id
@@ -160,6 +185,37 @@ service cloud.firestore {
           )
         );
       allow delete: if false;
+
+      match /plies/{index} {
+        allow read: if request.auth != null && (
+          request.auth.uid == matchDoc(id).white_id
+          || request.auth.uid == matchDoc(id).black_id
+        );
+        allow create: if request.auth != null
+          && exists(/databases/$(database)/documents/matches/$(id))
+          && matchDoc(id).status == 'playing'
+          && (
+            request.auth.uid == matchDoc(id).white_id
+            || request.auth.uid == matchDoc(id).black_id
+          )
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.at == request.time
+          && request.resource.data.n == int(index)
+          && request.resource.data.n == matchDoc(id).plyCount
+          && request.resource.data.n < 400
+          && (
+            request.resource.data.kind == 'resign'
+            || request.resource.data.kind == 'claim'
+            || (
+              request.resource.data.kind == 'move'
+              && request.resource.data.from.row is int
+              && request.resource.data.from.col is int
+              && request.resource.data.to.row is int
+              && request.resource.data.to.col is int
+            )
+          );
+        allow update, delete: if false;
+      }
     }
   }
 }

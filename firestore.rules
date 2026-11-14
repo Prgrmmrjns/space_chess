@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function matchDoc(id) {
+      return get(/databases/$(database)/documents/matches/$(id)).data;
+    }
+
+    function finishedTogether(uid) {
+      return request.resource.data.lastMatch is string
+        && exists(/databases/$(database)/documents/matches/$(request.resource.data.lastMatch))
+        && matchDoc(request.resource.data.lastMatch).status == 'done'
+        && (matchDoc(request.resource.data.lastMatch).white_id == uid
+            || matchDoc(request.resource.data.lastMatch).black_id == uid)
+        && (matchDoc(request.resource.data.lastMatch).white_id == request.auth.uid
+            || matchDoc(request.resource.data.lastMatch).black_id == request.auth.uid);
+    }
+
+    match /profiles/{uid} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.elo == 1200
+        && request.resource.data.games == 0
+        && request.resource.data.username is string
+        && request.resource.data.username.matches('^[A-Za-z0-9_]{3,16}$');
+      allow update: if request.auth != null
+        && request.resource.data.username == resource.data.username
+        && request.resource.data.games == resource.data.games + 1
+        && request.resource.data.elo >= resource.data.elo - 32
+        && request.resource.data.elo <= resource.data.elo + 32
+        && finishedTogether(uid)
+        && resource.data.get('lastMatch', '') != request.resource.data.lastMatch;
+      allow delete: if false;
+    }
+
+    match /matches/{id} {
+      allow read: if resource.data.status == 'open'
+        || (request.auth != null && (
+          request.auth.uid == resource.data.white_id
+          || request.auth.uid == resource.data.black_id
+        ));
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.white_id
+        && request.resource.data.status == 'open'
+        && request.resource.data.black_id == null
+        && request.resource.data.rated == true;
+      allow update: if request.auth != null
+        && request.resource.data.white_id == resource.data.white_id
+        && request.resource.data.rated == resource.data.rated
+        && request.resource.data.code == resource.data.code
+        && (
+          request.auth.uid == resource.data.white_id
+          || request.auth.uid == resource.data.black_id
+          || (
+            resource.data.status == 'open'
+            && resource.data.black_id == null
+            && request.resource.data.black_id == request.auth.uid
+            && request.resource.data.status == 'playing'
+          )
+        );
+      allow delete: if false;
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { CIV_LABELS, FLEET_NAMES } from './engine/constants'
 import { cloneState } from './engine/board'
 import { getLegalMoves, playMove, playMoveObject, startGame, statusLabel } from './engine/game'
@@ -8,11 +8,12 @@ import { tauntLine, type TauntEvent } from './ai/taunts'
 import { Board } from './components/Board'
 import { CivPortrait } from './components/CivPortrait'
 import { RulesPanel } from './components/RulesPanel'
-import { OnlineApp } from './components/OnlineApp'
 import { SetupScreen } from './components/SetupScreen'
 import { Tutorial, tutorialSeen } from './components/Tutorial'
 import { useAiWorker } from './hooks/useAiWorker'
 import { useAudio } from './hooks/useAudio'
+
+const OnlineApp = lazy(() => import('./components/OnlineApp').then((mod) => ({ default: mod.OnlineApp })))
 
 const DEFAULT_CONFIG: GameConfig = {
   mode: 'pvai',
@@ -172,14 +173,16 @@ export default function App() {
           onLeaderboard={() => setScreen('ranks')}
         />
       ) : screen === 'online' || screen === 'ranks' ? (
-        <OnlineApp
-          key={screen}
-          initial={screen === 'ranks' ? 'ranks' : 'lobby'}
-          onExit={() => setScreen('setup')}
-          muted={muted}
-          onToggleMute={toggleMute}
-          playEffect={playEffect}
-        />
+        <Suspense fallback={<p className="status">Opening the lobby…</p>}>
+          <OnlineApp
+            key={screen}
+            initial={screen === 'ranks' ? 'ranks' : 'lobby'}
+            onExit={() => setScreen('setup')}
+            muted={muted}
+            onToggleMute={toggleMute}
+            playEffect={playEffect}
+          />
+        </Suspense>
       ) : (
         state && (
           <main className="play">

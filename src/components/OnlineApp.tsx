@@ -2,7 +2,17 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { CIV_ABILITIES, CIV_LABELS, FLEET_NAMES } from '../engine/constants'
 import { getLegalMoves, statusLabel } from '../engine/game'
 import type { Civilization, Color, Move, PieceType, Pos } from '../engine/types'
-import { callMatch, supabase, supabaseConfigured } from '../online/client'
+import {
+  callMatch,
+  loadLobby,
+  loadProfile,
+  loadRanks,
+  signIn as signInAccount,
+  signOut,
+  signUp,
+  watchAuth,
+  watchMatch,
+} from '../online/client'
 import type { MatchRow } from '../online/server'
 import { Board } from './Board'
 import { CivPortrait } from './CivPortrait'
@@ -42,7 +52,6 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   const [selected, setSelected] = useState<Pos | null>(null)
   const [promo, setPromo] = useState<{ from: Pos; to: Pos } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [rulesOpen, setRulesOpen] = useState(false)
   const [confirmResign, setConfirmResign] = useState(false)
@@ -50,29 +59,17 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   const heard = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!supabaseConfigured) return
-    const client = supabase()
-    void client.auth.getSession().then(({ data }) => {
-      const id = data.session?.user.id ?? null
+    return watchAuth((id) => {
       setUserId(id)
-      if (id) setView(initial === 'ranks' ? 'ranks' : 'lobby')
+      if (id) setView((current) => (current === 'auth' ? (initial === 'ranks' ? 'ranks' : 'lobby') : current))
     })
-    const { data } = client.auth.onAuthStateChange((_event, session) => {
-      setUserId(session?.user.id ?? null)
-    })
-    return () => data.subscription.unsubscribe()
   }, [initial])
 
   useEffect(() => {
-    if (!userId || !supabaseConfigured) return
-    void supabase()
-      .from('profiles')
-      .select('username, elo, games')
-      .eq('id', userId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) setProfile(data as Profile)
-      })
+    if (!userId) return
+    void loadProfile(userId).then((data) => {
+      if (data) setProfile(data)
+    })
   }, [userId, match?.status])
 
   useEffect(() => {
@@ -83,59 +80,38 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
 
   const matchId = match?.id
   useEffect(() => {
-    if (!matchId || !supabaseConfigured) return
-    const channel = supabase()
-      .channel(`match-${matchId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${matchId}` },
-        (payload) => {
-          const next = payload.new as MatchRow
-          setMatch(next)
-          setSelected(null)
-          setPromo(null)
-          const move = next.state?.lastMove
-          const repeat = heard.current === next.updated_at
-          const opened = heard.current === null
-          heard.current = next.updated_at
-          if (!move || repeat || opened) return
-          playEffect(move.capture || move.hazardDeaths?.length ? 'capture' : 'move')
-        },
-      )
-      .subscribe()
-    return () => {
-      void supabase().removeChannel(channel)
-    }
+    if (!matchId) return
+    return watchMatch(matchId, (next) => {
+      setMatch(next)
+      setSelected(null)
+      setPromo(null)
+      const move = next.state?.lastMove
+      const repeat = heard.current === next.updated_at
+      const opened = heard.current === null
+      heard.current = next.updated_at
+      if (!move || repeat || opened) return
+      playEffect(move.capture || move.hazardDeaths?.length ? 'capture' : 'move')
+    })
   }, [matchId, playEffect])
 
   async function refreshLobby() {
-    const { data, error: loadError } = await supabase()
-      .from('matches')
-      .select('*')
-      .order('updated_at', { ascending: false })
-      .limit(40)
-    if (loadError) {
-      setError(loadError.message)
-      return
+    if (!userId) return
+    try {
+      setRows(await loadLobby(userId))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The lobby could not be loaded')
     }
-    setRows((data ?? []) as MatchRow[])
   }
 
   async function refreshRanks() {
-    const { data, error: loadError } = await supabase()
-      .from('profiles')
-      .select('username, elo, games')
-      .order('elo', { ascending: false })
-      .limit(50)
-    if (loadError) {
-      setError(loadError.message)
-      return
+    try {
+      setRanks(await loadRanks())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The leaderboard could not be loaded')
     }
-    setRanks((data ?? []) as Profile[])
   }
 
   useEffect(() => {
-    if (!supabaseConfigured) return
     if (view === 'lobby' && userId) void refreshLobby()
     if (view === 'ranks') void refreshRanks()
   }, [view, userId])
@@ -154,42 +130,26 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
   async function signIn(event: FormEvent) {
     event.preventDefault()
     setError(null)
-    setInfo(null)
     setBusy(true)
-    const client = supabase()
-    if (mode === 'up') {
-      if (!/^[A-Za-z0-9_]{3,16}$/.test(username)) {
-        setBusy(false)
-        setError('Username: 3–16 letters, numbers, or underscores.')
+    try {
+      if (mode === 'up') {
+        if (!/^[A-Za-z0-9_]{3,16}$/.test(username)) {
+          setError('Username: 3–16 letters, numbers, or underscores.')
+          return
+        }
+        const id = await signUp(email, password, username)
+        setUserId(id)
+        setView('lobby')
         return
       }
-      const { data, error: signError } = await client.auth.signUp({
-        email,
-        password,
-        options: { data: { username } },
-      })
+      const id = await signInAccount(email, password)
+      setUserId(id)
+      setView(initial === 'ranks' ? 'ranks' : 'lobby')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign-in failed')
+    } finally {
       setBusy(false)
-      if (signError) {
-        setError(signError.message)
-        return
-      }
-      if (!data.session) {
-        setInfo('Account created. Confirm the email, then sign in. Turn off email confirmation in the Supabase Auth settings if you want a session immediately.')
-        setMode('in')
-        return
-      }
-      setUserId(data.session.user.id)
-      setView('lobby')
-      return
     }
-    const { data, error: signError } = await client.auth.signInWithPassword({ email, password })
-    setBusy(false)
-    if (signError) {
-      setError(signError.message)
-      return
-    }
-    setUserId(data.user.id)
-    setView(initial === 'ranks' ? 'ranks' : 'lobby')
   }
 
   async function createMatch() {
@@ -300,28 +260,6 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
     else setSelected(null)
   }
 
-  if (!supabaseConfigured) {
-    return (
-      <section className="account">
-        <p className="brand">Space Chess</p>
-        <h1>Rated play is ready in the client.</h1>
-        <p className="lede">
-          Login, live matches, and the Elo table talk to a Supabase project named space-chess.
-          This organisation is already at its two active free-project limit, so the new project
-          could not be created without pausing another one. Guest games on this device still work.
-        </p>
-        <ol className="howto">
-          <li>Free a project slot, then create space-chess in eu-central-1.</li>
-          <li>Run the SQL in supabase/migrations and deploy the match function.</li>
-          <li>Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, locally and on Vercel. Turn off email confirmation if you want an instant session.</li>
-        </ol>
-        <button type="button" className="cta" onClick={onExit}>
-          Back to local play
-        </button>
-      </section>
-    )
-  }
-
   return (
     <div className="app">
       {view === 'auth' && (
@@ -358,7 +296,6 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
               />
             </label>
             {error && <p className="error-line">{error}</p>}
-            {info && <p className="notice">{info}</p>}
             <div className="setup-actions">
               <button type="submit" className="cta" disabled={busy}>
                 {mode === 'up' ? 'Create account' : 'Sign in'}
@@ -440,7 +377,7 @@ export function OnlineApp({ initial, onExit, muted, onToggleMute, playEffect }: 
               <button
                 type="button"
                 onClick={() => {
-                  void supabase().auth.signOut()
+                  void signOut()
                   setUserId(null)
                   setProfile(null)
                   setView('auth')

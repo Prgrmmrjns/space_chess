@@ -1,6 +1,6 @@
 # Space Chess
 
-A 16×16 fleet battle in a browser. Every file starts occupied, both flagships have to survive, and the sky moves after every full turn. Five civilisations, three AI difficulties, local hot-seat, and rated online play when a Supabase project is connected.
+A 16×16 fleet battle in a browser. Every file starts occupied, both flagships have to survive, and the sky moves after every full turn. Five civilisations, three AI difficulties, local hot-seat, and rated online play stored in Firebase.
 
 ![Space Chess setup](docs/screenshot-setup.png)
 
@@ -23,24 +23,13 @@ Guest games (vs AI, hot-seat, AI vs AI) need no account. Music starts after the 
 
 ## Rated online
 
-The browser only needs the public project URL and the anon key. The service-role key stays on the server, inside the `match` Edge Function. Copy `.env.example` to `.env`:
+Accounts, open tables, live boards, and the Elo list live in the Firebase project `spacechess-fleet` (Firestore in `europe-west3`, email/password auth). The public web config is in `src/online/client.ts`. Firestore security rules are in `firestore.rules`.
 
-```
-VITE_SUPABASE_URL=https://<project-ref>.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon key>
-```
+The same rules engine that runs the local game writes each match. A player can only change a rating by at most 32 points, and only once per finished match they were in. Resign, or claim the game after the opponent has left the clock untouched for a minute.
 
-Set the same two variables on Vercel (Project → Settings → Environment Variables) and redeploy. Framework preset **Vite**, build `npm run build`, output `dist`.
+Deploy rule changes with `firebase deploy --only firestore,auth` from this repo. Vercel stays a static Vite site: build `npm run build`, output `dist`. No extra environment variables are required for rated play. Add the Vercel hostname under Firebase Authentication → Settings → Authorized domains before signing in from that site.
 
-The Supabase organisation behind this repo is already at its two-active-project free limit, so `space-chess` could not be created from here without pausing another project. When a slot is free:
-
-1. Create a project named `space-chess` in `eu-central-1`.
-2. Run `supabase/migrations/20261114170000_space_chess.sql` in the SQL editor. It creates `profiles` and `matches`, a private signup trigger, row level security, and the realtime publication. Clients can read the leaderboard and their matches. They cannot write Elo or match state.
-3. In Authentication → Providers → Email, turn off “Confirm email” so a new pilot gets a session immediately.
-4. `npm run bundle:fn`, then deploy `supabase/functions/match` with JWT verification on. The function loads the same rules engine, rejects illegal moves, and on a finished rated game applies `elo + 32 * (score - expected)`.
-5. Paste the project URL and anon key into `.env` and Vercel.
-
-Lobby flow: create a rated game and pick your civilisation, or join with the six-character code and pick yours. The board follows the match row. Resign, or claim the game after the opponent has left the clock untouched for a minute. Both go through the function.
+A Supabase migration and Edge Function remain in `supabase/` if that backend is used later. They are not what the lobby calls.
 
 ## Rules
 
@@ -106,7 +95,7 @@ src/engine/        rules, Elo
 src/ai/            search, worker, trash talk
 src/components/    board, setup, portraits, lobby
 src/online/        match server and the browser client
-supabase/          migration and the match function
+firebase.json      Firestore rules and the spacechess-fleet project
 public/audio/      music, move, capture
 legacy/            original Pygame game
 ```
@@ -122,6 +111,5 @@ legacy/            original Pygame game
 ## Known limitations
 
 - Hard still stops at its node budget on a crowded board.
-- Rated play stays dark until `space-chess` exists and the two `VITE_` variables are set. Creating that project needs a free Supabase slot.
-- A disconnect claim is a full minute with no move, checked by the server. Closing the tab does not by itself stop the clock.
-- The service-role key must never be added to Vite or Vercel.
+- A rating can move by at most 32 points per finished match. The exact Elo formula runs in the client; the database enforces the cap and that the match is finished.
+- A disconnect claim is a full minute with no move. Closing the tab does not by itself stop the clock.
